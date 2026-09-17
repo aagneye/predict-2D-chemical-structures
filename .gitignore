@@ -1,0 +1,51 @@
+# --- Editors / IDEs ---
+.vscode/
+.idea/
+.cursor/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.python-version
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# --- Kiro agent internals (local-only, not shared via git) ---
+.kiro/agents/
+
+# --- Competition data (large, never commit — see docs/02-dataset.md) ---
+/data/
+*.parquet
+*.zarr/
+
+# --- Experiment outputs / model artifacts ---
+runs/
+checkpoints/
+outputs/
+wandb/
+mlruns/
+lightning_logs/
+*.ckpt
+*.pt
+*.pth
+*.onnx
+.cache/
+
+# --- Submissions ---
+submission.csv
+submissions/
+
+# --- Secrets ---
+.env
+*.pem
+kaggle.json
+service-account*.json
