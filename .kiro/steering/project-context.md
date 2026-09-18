@@ -8,14 +8,29 @@ product / metabolomics small-molecule structure elucidation. NOT the BioHub
 cell-tracking project — this is a separate, unrelated repo/competition.
 Full brief: `docs/00-brief.md`. Rules: `docs/01-competition-rules.md`.
 Dataset: `docs/02-dataset.md`. Literature: `docs/03-literature-review.md`.
-Method plan: `docs/04-method-landscape.md`.
+Method plan: `docs/04-method-landscape.md`. Community/competitor intel
+(Kaggle notebooks & discussion): `docs/05-community-intel.md`.
+**Concrete build plan (baseline, pipeline, validation, compute):
+`docs/06-implementation-plan.md` — start here for "what do I do next".**
+
+## CRITICAL: the visible test set leaks
+
+The visible `test.parquet` is a sample of `train.parquet` (organizer-
+documented). Verified evidence: the rank-1 public notebook's own diagnostics
+show `best_library_sim` == exactly 1.0 for 100% of 400 visible test
+molecules, with its analog + neural channels contributing 0.0%. **The public
+leaderboard is therefore not a usable optimization target** — it mostly
+measures whether you implemented a library lookup. All iteration must happen
+against our own held-out split (by `inchikey14`, NP-weighted, with
+synthesized Class-1/2/3 proxies). See `06-implementation-plan.md`.
 
 ## Repo
 
 - Remote: `https://github.com/aagneye/predict-2D-chemical-structures.git`
   (origin, branch `main`)
-- No commits pushed yet as of 2026-09-17 — repo was freshly `git init`'d
-  this session. Nothing has been pushed to the remote.
+- Commit `9f19493` (session 1 docs + scaffolding) **is pushed** to
+  `origin/main`. Session 2's implementation commits are **local only**,
+  pending user confirmation before pushing.
 
 ## Key facts to hold in working memory
 
@@ -48,10 +63,24 @@ generation (fingerprint→SMILES decoder, formula-constrained) as a lower-
 expectation supplementary source, then (D) fuse/re-rank all candidate pools
 into one deduped (by InChIKey14) top-25 list per molecule.
 
-## Status as of 2026-09-17 (session 1)
+## Status as of 2026-09-18 (session 2)
 
-Completed: repo init + remote, folder structure, .gitignore, full literature
-review, full dataset column/library breakdown, method landscape doc, this
-steering doc, codebase-map.md. No code written yet — no data downloaded
-locally yet either. See `.kiro/memory/state-2026-09-17.md` for the fuller
-session log and next-session TODOs.
+**Code exists and is tested.** 317 tests pass, ruff clean. Implemented:
+validation split (leak-proof, NP-weighted, synthetic novelty classes), MRR@25
+scorer, Channel 1 (library search), Channel 2 (mass-shifted analog
+propagation), weighted fusion, baseline pipeline with leakage diagnostics,
+FPNet spectrum→fingerprint transformer + training loop, and four CLI scripts.
+See `docs/07-codebase-guide.md`.
+
+Environment: `.venv` via `uv`, Python 3.12, RDKit pinned 2026.3.3. Run tests
+with `.venv/Scripts/python -m pytest tests/ -q`.
+
+**Still no competition data downloaded** — `data/raw/` is empty; everything is
+verified against synthetic fixtures only.
+
+Not yet done: FPNet wired into `pipeline.py`, fragmentation channel, learned
+GBM reranker, de novo generation (the intended differentiator). See
+`docs/06-implementation-plan.md` steps 6-10.
+
+Earlier: session 1 (2026-09-17) produced repo init, docs, literature review,
+dataset breakdown. See `.kiro/memory/state-*.md` for per-session logs.

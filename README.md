@@ -16,7 +16,13 @@ structures (SMILES) for each test molecule from its LC-MS/MS spectra.
    novelty classes, curation recipes
 4. `docs/03-literature-review.md` — CASMI history + survey of MS/MS→structure
    ML methods (SIRIUS, MIST/MIST-CF, MSNovelist, DiffMS, DreaMS, etc.)
-5. `docs/04-method-landscape.md` — our concrete phased implementation plan
+5. `docs/04-method-landscape.md` — phased architecture plan (the "why")
+6. `docs/05-community-intel.md` — competitor intel, and **why the public
+   leaderboard is not a usable target** (the visible test set leaks)
+7. `docs/06-implementation-plan.md` — baseline definition, pipeline, validation
+   design, Azure compute plan. **Start here for "what do I do next".**
+8. `docs/07-codebase-guide.md` — what exists in `src/`, design rationale,
+   end-to-end workflow
 
 For AI-assisted sessions: `.kiro/steering/project-context.md` and
 `.kiro/steering/codebase-map.md` hold condensed orientation; `.kiro/memory/`
@@ -60,12 +66,26 @@ data/raw/test.parquet
 data/raw/sample_submission.csv
 ```
 
-Python environment: not yet finalized (no `pyproject.toml`/`requirements.txt`
-committed as of this writing — see `.kiro/steering/codebase-map.md` for
-current status). Anticipated core dependencies: `polars` or `pandas` +
-`pyarrow` (parquet), `rdkit` (canonicalization/InChIKey/fingerprints),
-`matchms` (spectral cleaning/similarity), plus whichever ML framework the
-chosen models need (PyTorch, most likely, given the literature).
+Python environment (`uv`, Python 3.12):
+
+```bash
+uv venv --python 3.12
+uv pip install -e ".[dev]"          # baseline pipeline + test suite
+uv pip install -e ".[dev,train]"    # adds torch for FPNet training
+```
+
+RDKit is pinned to **2026.3.3** to match the competition's scoring environment,
+since tautomer canonicalization output is version-sensitive. `torch` is an
+optional `train` extra so the baseline installs without CUDA wheels.
+
+Run the test suite (317 tests, synthetic fixtures — no data needed):
+
+```bash
+.venv/Scripts/python -m pytest tests/ -q
+```
+
+See `docs/07-codebase-guide.md` for the module map, design rationale, and the
+end-to-end workflow.
 
 ## Submission format
 
