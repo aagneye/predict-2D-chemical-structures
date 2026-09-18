@@ -43,7 +43,7 @@ s1, loss1, t1 = steps[-1]
 rate = (s1 - s0) / (t1 - t0) if t1 > t0 else 0.0
 
 vals = [float(v) for v in re.findall(r"cosine similarity ([\d.]+)", text)]
-now = datetime.datetime.now(datetime.timezone.utc)
+now = datetime.datetime.now(datetime.UTC)
 
 print(f"state       {'RUNNING' if running else 'FINISHED / STOPPED'}")
 print(f"progress    {s1:,}/{TOTAL:,}  ({s1 / TOTAL:.1%})")
