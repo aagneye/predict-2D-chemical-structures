@@ -1,7 +1,10 @@
 # Codebase Map — Enveda CASMI 2026
 
-Updated 2026-09-18 (session 2). Baseline pipeline, validation and FPNet are
-implemented and tested; see `docs/07-codebase-guide.md` for the detailed guide.
+Updated 2026-09-18 (session 3). Baseline pipeline, validation and FPNet are
+implemented and tested, trained on the real dataset on Azure, and submitted
+to Kaggle via a notebook. See `docs/07-codebase-guide.md` for the detailed
+guide and `.kiro/memory/state-2026-09-18-session3.md` for the Azure/Kaggle
+operational details.
 
 ```
 Enveda CASMI/
@@ -41,6 +44,9 @@ Enveda CASMI/
 │   ├── build_pool.py        # COCONUT + train structures -> pool.npz
 │   ├── run_baseline.py      # THE baseline number, per novelty class
 │   └── train_fpnet.py       # Azure box. --split is mandatory (anti-leak).
+├── kaggle/
+│   ├── probe/               # Environment probe: confirmed no rdkit, 4 CPUs on Kaggle
+│   └── submission/          # Submitted notebook + kernel-metadata.json
 ├── tests/                   # 317 tests, all passing. Synthetic fixtures only.
 │   ├── conftest.py          # Fixtures from real small molecules
 │   ├── test_adducts.py / test_chem.py / test_spectra.py
@@ -64,15 +70,34 @@ Enveda CASMI/
 
 ## Facts that are easy to get wrong
 
-- **No competition data is downloaded.** `data/raw/` is empty. Every test uses
-  synthetic fixtures. The scripts have been verified end-to-end against a
-  synthetic `train.parquet`, not against the real 3 GB files.
-- **The visible `test.parquet` leaks** (it is a sample of train). Iterate
-  against `scripts/build_split.py` output only.
-- **Git**: commit `9f19493` (docs/scaffolding from session 1) **is pushed** to
-  `origin/main`. Session 2's nine implementation commits are **local only** —
-  not pushed, pending user confirmation.
-- FPNet exists but is **not yet wired into `pipeline.py`**. The model and
-  `score_candidates()` are tested; the pipeline does not call them.
+- **Competition data IS downloaded — on the Azure box, not locally.**
+  `/mnt/casmi/data/raw/` on `azureuser@20.51.160.183` has the real
+  `train.parquet` (2,539,608 rows) and `test.parquet` (400 molecules, 1,213
+  spectra). Local `data/raw/` is still empty and gitignored; don't assume
+  "no data downloaded" without checking the Azure box.
+- **FPNet has been trained on the real data.** Checkpoint at
+  `~/casmi_checkpoints/fpnet_final.pt` on the Azure box (persistent home dir,
+  survives VM deallocation — do NOT rely on `/mnt/casmi/*`, which is
+  ephemeral and wiped on deallocation). Val cosine similarity 0.71. It is
+  trained but **not wired into `pipeline.py`** yet — see below.
+- **A baseline submission has been made to Kaggle.** This IS a notebook-only
+  competition — plain CSV upload via the API returns 400. Submission requires
+  a committed notebook (see `kaggle/submission/`) plus
+  `kaggle competitions submit -k <kernel> -f submission.csv -v <version> -m
+  <msg>`. Running/completing a notebook does NOT auto-submit it. As of
+  session 3's end, submissions were still PENDING — public score not yet
+  known.
+- **The visible `test.parquet` leaks** (it is a sample of train). Our own
+  pipeline, run against the real data, independently reproduced this exactly:
+  100% of 400 visible test molecules get a perfect (1.0) library-similarity
+  match. Iterate against `scripts/build_split.py` output only; don't trust
+  the public LB score.
+- **Git**: everything through commit `9c39083` (session 2's implementation)
+  plus session 3's Azure/Kaggle-tooling commits are pushed to `origin/main`.
+- FPNet exists, is trained, but is **not yet wired into `pipeline.py`**. The
+  model, checkpoint and `score_candidates()` are all ready; the pipeline
+  still only runs Channels 1+2.
 - De novo generation for class 3 is **not implemented** and is the intended
   differentiator versus the retrieval-only reference solution.
+- **Azure box `rogii-gpu` root disk was at 99% full (3GB free)** as of
+  session 3's end — needs fixing before more work happens there.

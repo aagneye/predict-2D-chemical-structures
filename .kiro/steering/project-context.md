@@ -28,9 +28,8 @@ synthesized Class-1/2/3 proxies). See `06-implementation-plan.md`.
 
 - Remote: `https://github.com/aagneye/predict-2D-chemical-structures.git`
   (origin, branch `main`)
-- Commit `9f19493` (session 1 docs + scaffolding) **is pushed** to
-  `origin/main`. Session 2's implementation commits are **local only**,
-  pending user confirmation before pushing.
+- Everything through session 2's implementation plus session 3's Azure/
+  Kaggle-tooling commits **is pushed** to `origin/main`.
 
 ## Key facts to hold in working memory
 
@@ -77,6 +76,32 @@ with `.venv/Scripts/python -m pytest tests/ -q`.
 
 **Still no competition data downloaded** — `data/raw/` is empty; everything is
 verified against synthetic fixtures only.
+
+
+## Status as of 2026-09-18 (session 3): Azure training + Kaggle submission
+
+Real competition data downloaded to the Azure GPU box (`rogii-gpu`, 4x T4,
+`azureuser@20.51.160.183`) — NOT locally; local `data/raw/` is still empty.
+FPNet trained on the real 2.5M-row train set (30k steps, val cosine
+similarity 0.71), checkpoint saved persistently at
+`~/casmi_checkpoints/fpnet_final.pt` on that box. Candidate pool (275,810
+structures) built from real train data.
+
+Ran the Channels-1+2 baseline against the real `test.parquet` and
+independently reproduced the documented leak: 100% of 400 visible test
+molecules get a perfect library match. Packaged an RDKit wheel + the pool +
+our source as a Kaggle Dataset, submitted a notebook, and pushed it to the
+leaderboard via `kaggle competitions submit -k ... -v ...`. **Public score
+was still PENDING as of session end** — check
+`.kiro/memory/state-2026-09-18-session3.md` or the Kaggle site directly for
+the resolved score before reporting it to anyone.
+
+**Azure box root disk is at 99% full** — fix before doing more work there.
+
+Not yet done: FPNet is trained but not wired into `pipeline.py`; fragmentation
+channel, learned GBM reranker, de novo generation all still pending. See
+`docs/06-implementation-plan.md` steps 6-10 and session 3's memory file for
+the full next-session TODO list.
 
 Not yet done: FPNet wired into `pipeline.py`, fragmentation channel, learned
 GBM reranker, de novo generation (the intended differentiator). See

@@ -195,11 +195,16 @@ notebook.
 
 ## Open decisions needing a call
 
-- Packaging/dependency tooling: `uv` vs `pip`+venv vs conda (rdkit installs
-  most painlessly via conda/mamba, but `uv` is faster for everything else —
-  leaning `uv` + pip-installed `rdkit` wheel, which is what the competition
-  environment itself uses)
+- **Resolved**: packaging is `uv` + pip-installed RDKit wheel (2026.3.3,
+  matches the competition's own scoring environment).
+- **Resolved**: code is pushed to `origin/main` (session 2's implementation
+  plus session 3's Azure/Kaggle tooling).
 - Whether to pursue DreaMS pretrained embeddings — requires verifying the
   license permits bundling weights as a Kaggle artifact (flagged in
   `03-literature-review.md` §9, still unresolved)
-- First git commit + push (nothing has ever been pushed to the remote)
+- Whether/when to add COCONUT to the candidate pool. `build_pool.py` supports
+  `--coconut`, but session 3's real-data pool build used train structures
+  only (275,810). Session 2's synthetic-fixture tests exercised the COCONUT
+  path; it just hasn't been given a real source file yet.
+- Azure box `rogii-gpu` root disk is at 99% full (3GB free) as of session 3 —
+  needs resizing or cleanup before more work happens there.
