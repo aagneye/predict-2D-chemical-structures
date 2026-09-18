@@ -7,12 +7,13 @@ follows, so the split is a required argument rather than an option.
 Example:
     python scripts/train_fpnet.py --train data/raw/train.parquet \\
         --split data/processed/split.npz --out checkpoints/fpnet \\
-        --max-steps 20000 --batch-size 64
+        --max-steps 20000 --batch-size 256
 """
 
 from __future__ import annotations
 
 import argparse
+from multiprocessing import Pool
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +23,38 @@ from casmi.chem import FingerprintCalculator
 from casmi.models.fpnet import FPNetConfig
 from casmi.models.train import TrainingConfig, build_training_rows, train_fpnet
 
+#: Per-worker calculator, initialised once per process. RDKit generators are not
+#: picklable, so they are constructed in the worker rather than passed in.
+_CALC: FingerprintCalculator | None = None
+
+
+def _init_worker() -> None:
+    global _CALC
+    _CALC = FingerprintCalculator()
+
+
+def _fingerprint(smiles: str):
+    assert _CALC is not None
+    return _CALC.from_smiles(smiles)
+
+
+def fingerprint_structures(
+    smiles: list[str], keys: list[str], workers: int
+) -> dict[str, np.ndarray]:
+    """Fingerprint unique structures, in parallel when workers > 1.
+
+    Fingerprinting ~276k structures dominates startup, and the box has 64
+    cores, so this is worth parallelising: it turns ~20 minutes of single-core
+    work into well under a minute.
+    """
+    if workers <= 1:
+        calculator = FingerprintCalculator()
+        results = [calculator.from_smiles(s) for s in smiles]
+    else:
+        with Pool(workers, initializer=_init_worker) as pool:
+            results = pool.map(_fingerprint, smiles, chunksize=256)
+    return {k: fp for k, fp in zip(keys, results, strict=True) if fp is not None}
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -29,7 +62,7 @@ def main() -> int:
     parser.add_argument("--split", required=True, help="required: prevents training on hold-out")
     parser.add_argument("--out", default="checkpoints/fpnet")
     parser.add_argument("--max-steps", type=int, default=20_000)
-    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--max-rows", type=int, default=None, help="cap rows, for smoke tests")
     parser.add_argument("--val-rows", type=int, default=2_000)
@@ -37,6 +70,12 @@ def main() -> int:
     parser.add_argument("--no-multi-gpu", action="store_true")
     parser.add_argument("--d-model", type=int, default=512)
     parser.add_argument("--layers", type=int, default=6)
+    parser.add_argument(
+        "--fp-workers",
+        type=int,
+        default=8,
+        help="processes for fingerprinting; set to core count on a big box",
+    )
     args = parser.parse_args()
 
     split_data = np.load(args.split, allow_pickle=False)
@@ -66,15 +105,17 @@ def main() -> int:
         .dropna()
         .drop_duplicates("inchikey14")
     )
-    print(f"[INFO] fingerprinting {len(structures):,} unique structures")
-    fingerprints: dict[str, np.ndarray] = {}
-    for i, record in enumerate(structures.itertuples()):
-        if i and i % 20_000 == 0:
-            print(f"  {i:,}/{len(structures):,}", flush=True)
-        fp = calculator.from_smiles(record.normalized_smiles)
-        if fp is not None:
-            fingerprints[record.inchikey14] = fp
-    print(f"[OK] {len(fingerprints):,} usable fingerprints, {calculator.n_bits} bits")
+    print(
+        f"[INFO] fingerprinting {len(structures):,} unique structures "
+        f"with {args.fp_workers} workers",
+        flush=True,
+    )
+    fingerprints = fingerprint_structures(
+        structures["normalized_smiles"].tolist(),
+        structures["inchikey14"].tolist(),
+        workers=args.fp_workers,
+    )
+    print(f"[OK] {len(fingerprints):,} usable fingerprints, {calculator.n_bits} bits", flush=True)
 
     model_config = FPNetConfig(
         n_bits=calculator.n_bits, d_model=args.d_model, n_layers=args.layers
