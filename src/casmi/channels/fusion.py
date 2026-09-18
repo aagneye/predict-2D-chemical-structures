@@ -77,7 +77,9 @@ def fuse(
     return ranked[:limit]
 
 
-def mass_error_penalty(candidate_mass: np.ndarray, target_mass: float, ppm_window: float) -> np.ndarray:
+def mass_error_penalty(
+    candidate_mass: np.ndarray, target_mass: float, ppm_window: float
+) -> np.ndarray:
     """Feature rewarding candidates closest to the measured mass.
 
     Every candidate already passed the ppm window, so this is a tiebreaker
