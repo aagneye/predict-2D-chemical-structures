@@ -44,6 +44,9 @@ lightning_logs/
 submission.csv
 submissions/
 
+# --- Kaggle notebook run outputs (fetched logs, not source) ---
+kaggle/**/out/
+
 # --- Secrets ---
 .env
 *.pem

@@ -1,0 +1,13 @@
+{
+  "id": "aagneye/casmi26-baseline-library-analog-propagation",
+  "title": "CASMI26 baseline: library + analog propagation",
+  "code_file": "casmi26-baseline.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_internet": false,
+  "competition_sources": ["enveda-CASMI26-molecule-id-mass-spectra"],
+  "dataset_sources": ["aagneye/casmi26-baseline-assets"],
+  "kernel_sources": []
+}
