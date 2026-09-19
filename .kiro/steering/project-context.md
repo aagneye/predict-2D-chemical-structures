@@ -109,3 +109,49 @@ GBM reranker, de novo generation (the intended differentiator). See
 
 Earlier: session 1 (2026-09-17) produced repo init, docs, literature review,
 dataset breakdown. See `.kiro/memory/state-*.md` for per-session logs.
+
+## Status as of 2026-09-19 (session 4): 4-channel pipeline + GBM reranker
+
+Confirmed the Kaggle public score from session 3: **0.152** (Channels 1+2
+only, weighted fusion). Target/reference: a community notebook (rank 1, gold
+zone), public score **0.339**, using 4 channels (library, analog, MetFrag-lite
+fragmentation, an FPNet-style transformer) fused by a bagged
+`HistGradientBoostingClassifier` reranker.
+
+**Implemented and pushed to `origin/main` this session** (386 tests pass,
+ruff clean):
+- Channel 5, MetFrag-lite in-silico fragmentation (`src/casmi/channels/
+  fragmentation.py`) — 1-2 bond-break fragment enumeration, peak-explain-ratio
+  scoring.
+- Channel 4 wired into `pipeline.py` — FPNet (already trained, session 3)
+  was never called by the pipeline; now `predict_molecule`/`run_pipeline`
+  accept optional `fpnet_model`/`fpnet_config`/`fpnet_device` params.
+- A learned GBM reranker (`src/casmi/channels/ranker.py`) replacing weighted
+  fusion as an option — bagged `HistGradientBoostingClassifier` ensemble over
+  `RankerConfig.class1_priors x seeds`, matching the reference's own bagging
+  design.
+- Scripts to build the reranker's training data from the held-out split
+  (`scripts/build_rank_train.py`) and fit it (`scripts/train_ranker.py`);
+  `scripts/run_baseline.py` extended with `--fragmentation`/
+  `--fpnet-checkpoint`/`--ranker` flags to measure honest per-channel deltas.
+- **A real bug found and fixed**: `DEFAULT_WEIGHTS` in `fusion.py` never
+  included `fragmentation_score`/`fpnet_score`, so those channels changed
+  diagnostics but never the actual ranking under weighted fusion (features
+  absent from the weights dict are implicitly zero-weighted). Fixed in
+  commit `7dd3a79` with 3 regression tests.
+- Kaggle notebook and dataset-build script rewritten for the 4-channel +
+  reranker pipeline, with clean fallback to weighted fusion / no-FPNet if
+  either artifact is missing.
+
+**Honest MRR@25 on the real held-out split (2000 molecules), so far**:
+library+analog baseline 0.337; +fragmentation 0.351; +fpnet 0.467 (FPNet is
+the single biggest lever found so far, especially for class 2). The full
+4-channel + GBM reranker number — the one to compare against the reference's
+0.339 — was **still running on Azure as of session end**. See
+`.kiro/memory/state-2026-09-19.md` for the exact stage reached, the ordered
+next-steps list (rebuild Kaggle dataset, push notebook, submit, verify), and
+Azure operational details.
+
+**Not yet done**: de novo generation for class 3 (still the intended
+differentiator vs. the retrieval-only reference solution — class-3 MRR
+remains ~0.01-0.02, near the floor, across every stage tried so far).
