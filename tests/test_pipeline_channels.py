@@ -108,6 +108,56 @@ class TestFragmentationChannelWiring:
         )
         assert result.diagnostics[0].best_fragmentation_score == 0.0
 
+    def test_fragmentation_score_has_nonzero_default_weight(self):
+        """Regression test: a feature absent from DEFAULT_WEIGHTS is silently
+        dropped by fuse() (multiplied by an implicit weight of 0), so
+        enabling Channel 5 would change diagnostics but never the ranking.
+        This asserts the wiring directly rather than via an end-to-end
+        scenario, since constructing a synthetic fixture where fragmentation
+        is the *only* differentiating signal is fragile (mass-error and
+        other tiebreakers tend to dominate small synthetic molecules).
+        """
+        from casmi.channels.fusion import DEFAULT_WEIGHTS
+
+        assert "fragmentation_score" in DEFAULT_WEIGHTS
+        assert DEFAULT_WEIGHTS["fragmentation_score"] > 0.0
+
+    def test_fpnet_score_has_nonzero_default_weight(self):
+        from casmi.channels.fusion import DEFAULT_WEIGHTS
+
+        assert "fpnet_score" in DEFAULT_WEIGHTS
+        assert DEFAULT_WEIGHTS["fpnet_score"] > 0.0
+
+    def test_fuse_score_changes_with_fragmentation_feature(self):
+        """Direct test of fuse() itself: two otherwise-identical candidates
+        that differ only in fragmentation_score must get different fused
+        scores, proving the feature is not silently dropped.
+        """
+        from casmi.channels.fusion import ScoredCandidate, fuse
+
+        base_features = {
+            "library_similarity": 0.0,
+            "analog_power": 0.0,
+            "analog_best_tanimoto": 0.0,
+            "analog_mean": 0.0,
+            "mass_error_penalty": 0.5,
+        }
+        low = ScoredCandidate(
+            inchikey14="AAAAAAAAAAAAAA",
+            smiles="C",
+            score=0.0,
+            features={**base_features, "fragmentation_score": 0.0},
+        )
+        high = ScoredCandidate(
+            inchikey14="BBBBBBBBBBBBBB",
+            smiles="CC",
+            score=0.0,
+            features={**base_features, "fragmentation_score": 1.0},
+        )
+        ranked = fuse([low, high])
+        scores = {c.inchikey14: c.score for c in ranked}
+        assert scores["BBBBBBBBBBBBBB"] > scores["AAAAAAAAAAAAAA"]
+
 
 class TestRerankerWiring:
     def _fit_toy_reranker(self):

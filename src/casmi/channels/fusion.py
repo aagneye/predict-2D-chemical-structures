@@ -37,12 +37,26 @@ class ScoredCandidate:
 #: Default channel weights for the baseline. Library search dominates when it
 #: fires because a near-1.0 entropy similarity is close to proof of identity;
 #: analog evidence is weaker but is the only signal available for class 2.
+#:
+#: ``fragmentation_score`` and ``fpnet_score`` are included so that enabling
+#: Channels 4/5 has an effect even without a fitted reranker — otherwise a
+#: feature absent from this dict is silently dropped by :func:`fuse` (it is
+#: multiplied by an implicit weight of 0), and turning a channel on would
+#: change nothing. Both are weighted modestly relative to library/analog
+#: evidence: fragmentation is a plausibility prior that can coincidentally
+#: match a wrong candidate, and the FPNet dot product is unnormalised across
+#: molecules (see :func:`casmi.models.fpnet.normalised_score`), so neither
+#: should be allowed to override a strong library or analog hit under plain
+#: weighted fusion. The learned reranker (:mod:`casmi.channels.ranker`) is
+#: what actually learns how much to trust each channel from data.
 DEFAULT_WEIGHTS: dict[str, float] = {
     "library_similarity": 1.0,
     "analog_power": 0.55,
     "analog_best_tanimoto": 0.15,
     "analog_mean": 0.10,
     "mass_error_penalty": 0.05,
+    "fragmentation_score": 0.20,
+    "fpnet_score": 0.05,
 }
 
 
