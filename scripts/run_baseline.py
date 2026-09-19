@@ -1,7 +1,10 @@
-"""Run the baseline against the held-out split and report MRR@25 by class.
+"""Run the pipeline against the held-out split and report MRR@25 by class.
 
-This produces *the* baseline number for the project. It reads the split's masks
-so the library it searches physically excludes held-out structures, and it
+This produces *the* baseline number for the project, and — when the optional
+channel flags are passed — the honest incremental MRR@25 each addition earns
+on the same held-out split, which is what step 6-8 of
+``docs/06-implementation-plan.md`` calls for. It reads the split's masks so
+the library it searches physically excludes held-out structures, and it
 removes the class-3 cohort from the candidate pool, so each cohort measures
 what it claims to.
 
@@ -10,8 +13,15 @@ Also prints the channel-contribution diagnostic. If ``library`` approaches
 the pattern visible in the public-LB-leading notebook's own output.
 
 Example:
+    # Channel 1+2 baseline (original behaviour, no flags needed)
     python scripts/run_baseline.py --train data/raw/train.parquet \\
         --split data/processed/split.npz --pool data/processed/pool.npz
+
+    # Full pipeline: + fragmentation, + FPNet, + learned reranker
+    python scripts/run_baseline.py --train data/raw/train.parquet \\
+        --split data/processed/split.npz --pool data/processed/pool.npz \\
+        --fragmentation --fpnet-checkpoint checkpoints/fpnet/fpnet_final.pt \\
+        --ranker checkpoints/ranker.pkl
 """
 
 from __future__ import annotations
@@ -38,6 +48,16 @@ def main() -> int:
     parser.add_argument("--out", default="runs/baseline")
     parser.add_argument("--limit", type=int, default=None, help="cap molecules, for smoke tests")
     parser.add_argument("--ppm", type=float, default=None, help="override candidate ppm window")
+    parser.add_argument(
+        "--fragmentation", action="store_true", help="enable Channel 5 (MetFrag-lite)"
+    )
+    parser.add_argument(
+        "--fpnet-checkpoint", default=None, help="enable Channel 4 with this checkpoint"
+    )
+    parser.add_argument("--fpnet-device", default="cpu")
+    parser.add_argument(
+        "--ranker", default=None, help="path to a fitted Reranker (.pkl); replaces weighted fusion"
+    )
     args = parser.parse_args()
 
     split_data = np.load(args.split, allow_pickle=False)
@@ -99,7 +119,33 @@ def main() -> int:
 
         config = replace(CFG, candidates=replace(CFG.candidates, ppm_window=args.ppm))
 
-    result = run_pipeline(molecules, library, pool, config=config, progress_every=25)
+    fpnet_model = None
+    fpnet_config = None
+    if args.fpnet_checkpoint:
+        from casmi.models.train import load_checkpoint
+
+        fpnet_model, fpnet_config = load_checkpoint(args.fpnet_checkpoint, device=args.fpnet_device)
+        print(f"[OK] loaded FPNet checkpoint: {args.fpnet_checkpoint}")
+
+    reranker = None
+    if args.ranker:
+        from casmi.channels.ranker import Reranker
+
+        reranker = Reranker.load(args.ranker)
+        print(f"[OK] loaded reranker: {args.ranker} ({len(reranker.models)} models)")
+
+    result = run_pipeline(
+        molecules,
+        library,
+        pool,
+        config=config,
+        progress_every=25,
+        fragmentation_channel=args.fragmentation,
+        fpnet_model=fpnet_model,
+        fpnet_config=fpnet_config,
+        fpnet_device=args.fpnet_device,
+        reranker=reranker,
+    )
 
     scores = evaluate_predictions(
         result.predictions,
@@ -108,7 +154,15 @@ def main() -> int:
     )
     summary = summarise_by_class(scores)
 
-    print("\n=== Baseline MRR@25 on held-out split ===")
+    active_channels = ["library", "analog"]
+    if args.fragmentation:
+        active_channels.append("fragmentation")
+    if args.fpnet_checkpoint:
+        active_channels.append("fpnet")
+    if args.ranker:
+        active_channels.append("gbm_reranker")
+    print(f"\n=== Active channels: {', '.join(active_channels)} ===")
+    print("=== Baseline MRR@25 on held-out split ===")
     print(format_summary(summary))
 
     contribution = result.channel_contribution()
@@ -127,6 +181,7 @@ def main() -> int:
     with open(out_dir / "summary.json", "w", encoding="utf-8") as handle:
         json.dump(
             {
+                "active_channels": active_channels,
                 "summary": summary,
                 "channel_contribution": contribution,
                 "n_molecules": len(molecules),
@@ -137,13 +192,15 @@ def main() -> int:
     with open(out_dir / "diagnostics.csv", "w", encoding="utf-8", newline="\n") as handle:
         handle.write(
             "molecule_id,target_mass,n_spectra,n_candidates,"
-            "best_library_sim,best_analog_sim,n_analogs,top_score,top_source\n"
+            "best_library_sim,best_analog_sim,n_analogs,top_score,top_source,"
+            "best_fragmentation_score,best_fpnet_score,used_reranker\n"
         )
         for d in result.diagnostics:
             handle.write(
                 f"{d.molecule_id},{d.target_mass:.5f},{d.n_spectra},{d.n_candidates},"
                 f"{d.best_library_similarity:.4f},{d.best_analog_similarity:.4f},"
-                f"{d.n_analogs},{d.top_score:.4f},{d.top_source}\n"
+                f"{d.n_analogs},{d.top_score:.4f},{d.top_source},"
+                f"{d.best_fragmentation_score:.4f},{d.best_fpnet_score:.4f},{d.used_reranker}\n"
             )
     print(f"\n[OK] wrote {out_dir}/summary.json and diagnostics.csv")
     return 0

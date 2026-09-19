@@ -312,3 +312,118 @@ class TestTrainFPNetScript:
         )
         assert result.returncode != 0
         assert "--split" in result.stderr
+
+
+class TestRunBaselineChannelFlags:
+    def test_fragmentation_flag_runs_end_to_end(self, train_parquet, baseline_artifacts, tmp_path):
+        split, pool = baseline_artifacts
+        out = tmp_path / "run_frag"
+        result = run_script(
+            "run_baseline.py",
+            "--train", train_parquet,
+            "--split", split,
+            "--pool", pool,
+            "--out", str(out),
+            "--ppm", "50",
+            "--fragmentation",
+        )
+        assert result.returncode == 0, result.stderr
+        assert "fragmentation" in result.stdout
+
+    def test_active_channels_reported_in_summary(self, train_parquet, baseline_artifacts, tmp_path):
+        split, pool = baseline_artifacts
+        out = tmp_path / "run_channels"
+        run_script(
+            "run_baseline.py", "--train", train_parquet, "--split", split,
+            "--pool", pool, "--out", str(out), "--ppm", "50", "--fragmentation",
+        )
+        summary = json.loads((out / "summary.json").read_text())
+        assert "active_channels" in summary
+        assert "fragmentation" in summary["active_channels"]
+
+
+class TestBuildRankTrainScript:
+    def test_runs_and_writes_training_matrix(self, train_parquet, baseline_artifacts, tmp_path):
+        split, pool = baseline_artifacts
+        out = tmp_path / "rank_train.npz"
+        result = run_script(
+            "build_rank_train.py",
+            "--train", train_parquet,
+            "--split", split,
+            "--pool", pool,
+            "--out", str(out),
+        )
+        assert result.returncode == 0, result.stderr
+        assert out.exists()
+
+        data = np.load(out, allow_pickle=False)
+        assert data["X"].ndim == 2
+        assert data["y"].ndim == 1
+        assert data["X"].shape[0] == data["y"].shape[0]
+        assert data["molecule_id"].shape[0] == data["y"].shape[0]
+
+    def test_with_fragmentation_flag(self, train_parquet, baseline_artifacts, tmp_path):
+        split, pool = baseline_artifacts
+        out = tmp_path / "rank_train_frag.npz"
+        result = run_script(
+            "build_rank_train.py",
+            "--train", train_parquet,
+            "--split", split,
+            "--pool", pool,
+            "--out", str(out),
+            "--fragmentation",
+        )
+        assert result.returncode == 0, result.stderr
+        assert out.exists()
+
+
+class TestTrainRankerScript:
+    def test_trains_and_saves_reranker(self, train_parquet, baseline_artifacts, tmp_path):
+        split, pool = baseline_artifacts
+        rank_train = tmp_path / "rank_train.npz"
+        assert run_script(
+            "build_rank_train.py",
+            "--train", train_parquet,
+            "--split", split,
+            "--pool", pool,
+            "--out", str(rank_train),
+        ).returncode == 0
+
+        out = tmp_path / "ranker.pkl"
+        result = run_script(
+            "train_ranker.py",
+            "--data", str(rank_train),
+            "--out", str(out),
+            "--max-iter", "10",
+        )
+        assert result.returncode == 0, result.stderr
+        assert out.exists()
+
+        from casmi.channels.ranker import Reranker
+
+        reranker = Reranker.load(out)
+        assert len(reranker.models) > 0
+
+    def test_ranker_usable_by_run_baseline(self, train_parquet, baseline_artifacts, tmp_path):
+        """The trained reranker must be loadable and usable by run_baseline.py."""
+        split, pool = baseline_artifacts
+        rank_train = tmp_path / "rank_train2.npz"
+        assert run_script(
+            "build_rank_train.py", "--train", train_parquet, "--split", split,
+            "--pool", pool, "--out", str(rank_train),
+        ).returncode == 0
+
+        ranker_path = tmp_path / "ranker2.pkl"
+        assert run_script(
+            "train_ranker.py", "--data", str(rank_train), "--out", str(ranker_path),
+            "--max-iter", "10",
+        ).returncode == 0
+
+        out = tmp_path / "run_ranked"
+        result = run_script(
+            "run_baseline.py", "--train", train_parquet, "--split", split,
+            "--pool", pool, "--out", str(out), "--ppm", "50",
+            "--ranker", str(ranker_path),
+        )
+        assert result.returncode == 0, result.stderr
+        assert "gbm_reranker" in result.stdout
