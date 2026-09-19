@@ -20,8 +20,9 @@ LOG="$WORK/full_validation.log"
 mkdir -p "$PROCESSED" "$RUNS"
 cd "$REPO"
 
-if pgrep -f "run_full_validation" > /dev/null; then
+if pgrep -f "run_baseline.py|build_rank_train.py|train_ranker.py" > /dev/null 2>&1; then
     echo "ERROR: a validation run is already active."
+    pgrep -af "run_baseline.py|build_rank_train.py|train_ranker.py"
     exit 1
 fi
 
