@@ -1,6 +1,6 @@
 {
   "id": "aagneye/casmi26-baseline-library-analog-propagation",
-  "title": "CASMI26 baseline: library + analog propagation",
+  "title": "CASMI26: 4-channel retrieval + GBM reranker",
   "code_file": "casmi26-baseline.ipynb",
   "language": "python",
   "kernel_type": "notebook",
