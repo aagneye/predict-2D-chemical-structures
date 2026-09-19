@@ -105,38 +105,31 @@ class PipelineResult:
         }
 
 
-def predict_molecule(
+def build_scored_candidates(
     molecule: QueryMolecule,
     library: SpectralLibrary,
     pool: CandidatePool,
     analog_index: AnalogIndex,
     config: Config | None = None,
-    weights: dict[str, float] | None = None,
     fragmentation_channel: bool = False,
     fpnet_model: Any | None = None,
     fpnet_config: Any | None = None,
     fpnet_device: str = "cpu",
-    reranker: Reranker | None = None,
-) -> tuple[list[str], MoleculeDiagnostics]:
-    """Produce a ranked SMILES list and diagnostics for one molecule.
+) -> tuple[list[ScoredCandidate], dict[str, Any]]:
+    """Assemble every channel's per-candidate features for one molecule.
 
-    Args:
-        fragmentation_channel: Enable Channel 5 (MetFrag-lite). Off by default
-            since it is the most expensive per-candidate channel (one RDKit
-            fragment enumeration per candidate SMILES).
-        fpnet_model: A loaded :class:`casmi.models.fpnet.FPNet` in eval mode,
-            or ``None`` to skip Channel 4 entirely (the default — this keeps
-            the baseline import-clean of torch, matching the rest of the
-            codebase's "torch is optional" pattern).
-        fpnet_config: The model's :class:`casmi.models.fpnet.FPNetConfig`,
-            required alongside ``fpnet_model``.
-        fpnet_device: Device the model lives on.
-        reranker: A fitted :class:`casmi.channels.ranker.Reranker`. When
-            supplied, final ranking uses its predicted probabilities instead
-            of :func:`casmi.channels.fusion.fuse`'s weighted sum; the fused
-            score is still computed first so every candidate keeps a
-            deterministic tiebreaker and diagnostics stay comparable across
-            runs with and without a reranker.
+    Shared by :func:`predict_molecule` (which fuses/ranks the result) and
+    reranker-training-data generation (which needs the full unranked,
+    unfused candidate list plus the raw library/analog evidence to attach a
+    label). Keeping this logic in one place means the features a trained
+    reranker sees during training are guaranteed identical in construction to
+    the features it sees at inference time.
+
+    Returns:
+        ``(candidates, context)`` where ``context`` carries the raw
+        ``library_hits``/``analogs`` results, useful for diagnostics and for
+        computing ``best_library_similarity``/``best_analog_similarity``
+        without recomputing the searches.
     """
     cfg = config or CFG
     target = molecule.target_mass
@@ -256,6 +249,67 @@ def predict_molecule(
                     features={"library_similarity": hit.similarity},
                 )
             )
+
+    context = {
+        "library_hits": library_hits,
+        "analogs": analogs,
+        "fragmentation_scores": fragmentation_feature,
+        "fpnet_scores": fpnet_feature,
+    }
+    return candidates, context
+
+
+def predict_molecule(
+    molecule: QueryMolecule,
+    library: SpectralLibrary,
+    pool: CandidatePool,
+    analog_index: AnalogIndex,
+    config: Config | None = None,
+    weights: dict[str, float] | None = None,
+    fragmentation_channel: bool = False,
+    fpnet_model: Any | None = None,
+    fpnet_config: Any | None = None,
+    fpnet_device: str = "cpu",
+    reranker: Reranker | None = None,
+) -> tuple[list[str], MoleculeDiagnostics]:
+    """Produce a ranked SMILES list and diagnostics for one molecule.
+
+    Args:
+        fragmentation_channel: Enable Channel 5 (MetFrag-lite). Off by default
+            since it is the most expensive per-candidate channel (one RDKit
+            fragment enumeration per candidate SMILES).
+        fpnet_model: A loaded :class:`casmi.models.fpnet.FPNet` in eval mode,
+            or ``None`` to skip Channel 4 entirely (the default — this keeps
+            the baseline import-clean of torch, matching the rest of the
+            codebase's "torch is optional" pattern).
+        fpnet_config: The model's :class:`casmi.models.fpnet.FPNetConfig`,
+            required alongside ``fpnet_model``.
+        fpnet_device: Device the model lives on.
+        reranker: A fitted :class:`casmi.channels.ranker.Reranker`. When
+            supplied, final ranking uses its predicted probabilities instead
+            of :func:`casmi.channels.fusion.fuse`'s weighted sum; the fused
+            score is still computed first so every candidate keeps a
+            deterministic tiebreaker and diagnostics stay comparable across
+            runs with and without a reranker.
+    """
+    cfg = config or CFG
+    target = molecule.target_mass
+
+    candidates, context = build_scored_candidates(
+        molecule,
+        library,
+        pool,
+        analog_index,
+        config=cfg,
+        fragmentation_channel=fragmentation_channel,
+        fpnet_model=fpnet_model,
+        fpnet_config=fpnet_config,
+        fpnet_device=fpnet_device,
+    )
+    library_hits = context["library_hits"]
+    analogs = context["analogs"]
+    fragmentation_feature = context["fragmentation_scores"]
+    fpnet_feature = context["fpnet_scores"]
 
     fused_weights = weights or DEFAULT_WEIGHTS
     ranked = fuse(candidates, weights=fused_weights, top_n=cfg.top_n)
