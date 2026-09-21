@@ -155,3 +155,31 @@ Azure operational details.
 **Not yet done**: de novo generation for class 3 (still the intended
 differentiator vs. the retrieval-only reference solution — class-3 MRR
 remains ~0.01-0.02, near the floor, across every stage tried so far).
+
+## Status as of 2026-09-21 (session 5): Kaggle resubmit + MolForge de novo
+
+Confirmed session 4's final honest held-out number: **4-channel + GBM
+reranker MRR@25 = 0.592** (class1 0.933, class2 0.787, class3 0.017).
+Resubmitted to Kaggle; the 4-channel pipeline scored **0.148** on the public
+LB — slightly *worse* than the 2-channel baseline's 0.152, exactly as
+expected since the public test set leaks (library lookup dominates it). Fixed
+a real bug found on resubmit: the shipped `ranker.pkl` was a 22-feature model
+but the code produces 25 features (`ValueError: X has 25 features, but ...
+expecting 22`); shipped the matching 25-feature reranker instead.
+
+**Main work: implemented Channel 6 — de novo generation for class 3**, a
+faithful reproduction of **MolForge** (Ucak et al. 2023,
+doi:10.1186/s13321-023-00693-0): an encoder-decoder Transformer (6+6 layers,
+8 heads, d_model=512, FFN=2048, dropout=0.1, pre-norm) that translates a
+fingerprint into SMILES, replacing the earlier GRU draft. Conditioned on our
+existing 10,407-bit fingerprint (deliberate, documented deviation from the
+paper's ECFP4, so it plugs straight into FPNet's output). Wired into
+`pipeline.py`/`fusion.py`/`ranker.py` (25-feature reranker). All tests pass,
+ruff clean. Committed + pushed as `f0b852f`.
+
+**Training is IN PROGRESS on the Azure box as of session end** — a ~13-hour,
+40k-step run on GPU 0 (`/mnt/casmi/checkpoints/denovo/`, log
+`/mnt/casmi/denovo_train.log`). **The class-3 MRR impact is not yet
+measured** — that's the first task next session. See
+`.kiro/memory/state-2026-09-21.md` for the exact next-steps list, training
+command, and how to check/measure it.
