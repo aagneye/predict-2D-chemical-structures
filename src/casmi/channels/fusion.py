@@ -38,17 +38,23 @@ class ScoredCandidate:
 #: fires because a near-1.0 entropy similarity is close to proof of identity;
 #: analog evidence is weaker but is the only signal available for class 2.
 #:
-#: ``fragmentation_score`` and ``fpnet_score`` are included so that enabling
-#: Channels 4/5 has an effect even without a fitted reranker — otherwise a
-#: feature absent from this dict is silently dropped by :func:`fuse` (it is
-#: multiplied by an implicit weight of 0), and turning a channel on would
-#: change nothing. Both are weighted modestly relative to library/analog
-#: evidence: fragmentation is a plausibility prior that can coincidentally
-#: match a wrong candidate, and the FPNet dot product is unnormalised across
-#: molecules (see :func:`casmi.models.fpnet.normalised_score`), so neither
-#: should be allowed to override a strong library or analog hit under plain
-#: weighted fusion. The learned reranker (:mod:`casmi.channels.ranker`) is
-#: what actually learns how much to trust each channel from data.
+#: ``fragmentation_score``, ``fpnet_score``, and ``denovo_score`` are included
+#: so that enabling Channels 4/5/6 has an effect even without a fitted
+#: reranker — otherwise a feature absent from this dict is silently dropped
+#: by :func:`fuse` (it is multiplied by an implicit weight of 0), and turning
+#: a channel on would change nothing (this exact bug shipped once already —
+#: see the git history around ``fragmentation_score``/``fpnet_score``, fixed
+#: in a session-4 commit — this comment exists so it is never repeated).
+#: All three are weighted modestly relative to library/analog evidence:
+#: fragmentation is a plausibility prior that can coincidentally match a
+#: wrong candidate, the FPNet dot product is unnormalised across molecules
+#: (see :func:`casmi.models.fpnet.normalised_score`), and de novo candidates
+#: are model *hallucinations* that happen to satisfy a mass filter — real,
+#: but weaker per-instance evidence than a channel that actually found the
+#: structure somewhere. None of the three should be allowed to override a
+#: strong library or analog hit under plain weighted fusion. The learned
+#: reranker (:mod:`casmi.channels.ranker`) is what actually learns how much
+#: to trust each channel from data.
 DEFAULT_WEIGHTS: dict[str, float] = {
     "library_similarity": 1.0,
     "analog_power": 0.55,
@@ -57,6 +63,7 @@ DEFAULT_WEIGHTS: dict[str, float] = {
     "mass_error_penalty": 0.05,
     "fragmentation_score": 0.20,
     "fpnet_score": 0.05,
+    "denovo_score": 0.10,
 }
 
 
@@ -89,6 +96,71 @@ def fuse(
 
     ranked = sorted(best_by_key.values(), key=lambda c: -c.score)
     return ranked[:limit]
+
+
+#: Library similarity at or above this is treated as near-certain identity
+#: (an (near-)exact entropy-similarity spectral match), regardless of which
+#: ranking method produced the list. See :func:`apply_library_override`.
+LIBRARY_OVERRIDE_THRESHOLD: float = 0.999
+
+
+def apply_library_override(
+    ranked: list[ScoredCandidate],
+    threshold: float = LIBRARY_OVERRIDE_THRESHOLD,
+) -> list[ScoredCandidate]:
+    """Force a (near-)perfect library match to rank #1, regardless of ranker output.
+
+    Both weighted fusion and the learned reranker can, in principle, rank a
+    candidate with a merely-strong secondary signal (fpnet/fragmentation/
+    analog) above one with a near-perfect library spectral match. Weighted
+    fusion mostly avoids this by construction (library gets the largest fixed
+    weight), but the reranker was trained on a held-out split where a *true*
+    positive's library_similarity is 1.0 in only ~11% of cases (most held-out
+    molecules are class 2/3, with no library signal at all) — so it never
+    reliably learned to treat an isolated, clean 1.0 as near-deterministic.
+    On a molecule where the true structure genuinely has a reference spectrum
+    (real class 1, or the leaked visible Kaggle test set where this is ~100%
+    of molecules), an entropy similarity this high is about as close to
+    ground truth as this problem gets, so this rule is a safety net rather
+    than a modelling shortcut.
+
+    Only ever promotes an existing candidate already in ``ranked`` — never
+    invents one — and is a no-op if no candidate clears the threshold or the
+    top-ranked candidate already clears it.
+
+    Args:
+        ranked: Already-ranked candidates (post fusion or post reranker),
+            best first.
+        threshold: Minimum ``library_similarity`` to qualify for promotion.
+            Defaults to 0.999 rather than exactly 1.0 to tolerate floating-
+            point noise in the entropy similarity computation.
+
+    Returns:
+        A new list with the best-qualifying candidate moved to index 0 (a
+        stable no-op copy if nothing qualifies or the top candidate already
+        does).
+    """
+    if not ranked:
+        return ranked
+
+    top_similarity = ranked[0].features.get("library_similarity", 0.0)
+    if top_similarity >= threshold:
+        return ranked
+
+    best_index = None
+    best_similarity = threshold
+    for i, candidate in enumerate(ranked):
+        similarity = candidate.features.get("library_similarity", 0.0)
+        if similarity >= best_similarity:
+            best_index = i
+            best_similarity = similarity
+
+    if best_index is None:
+        return ranked
+
+    promoted = ranked[best_index]
+    reordered = [promoted] + ranked[:best_index] + ranked[best_index + 1 :]
+    return reordered
 
 
 def mass_error_penalty(

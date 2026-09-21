@@ -357,3 +357,67 @@ class TestFusion:
         assert "library_similarity" in DEFAULT_WEIGHTS
         assert "analog_power" in DEFAULT_WEIGHTS
         assert CFG.top_n == 25
+
+
+class TestApplyLibraryOverride:
+    def test_promotes_perfect_library_match_to_rank_one(self):
+        """A reranker-style order that buried a perfect match must be fixed."""
+        from casmi.channels.fusion import apply_library_override
+
+        ranked = [
+            ScoredCandidate("NOISY000000000", "CCC", 0.9, {"fpnet_score": 50.0}),
+            ScoredCandidate("PERFECT0000000", "CCO", 0.5, {"library_similarity": 1.0}),
+            ScoredCandidate("OTHER000000000", "CCN", 0.4, {"analog_power": 0.7}),
+        ]
+        fixed = apply_library_override(ranked)
+        assert fixed[0].inchikey14 == "PERFECT0000000"
+        # Nothing else lost or duplicated.
+        assert {c.inchikey14 for c in fixed} == {c.inchikey14 for c in ranked}
+        assert len(fixed) == len(ranked)
+
+    def test_no_op_when_top_already_near_perfect(self):
+        from casmi.channels.fusion import apply_library_override
+
+        ranked = [
+            ScoredCandidate("PERFECT0000000", "CCO", 0.9, {"library_similarity": 1.0}),
+            ScoredCandidate("OTHER000000000", "CCC", 0.1, {"analog_power": 0.7}),
+        ]
+        fixed = apply_library_override(ranked)
+        assert [c.inchikey14 for c in fixed] == [c.inchikey14 for c in ranked]
+
+    def test_no_op_when_nothing_clears_threshold(self):
+        from casmi.channels.fusion import apply_library_override
+
+        ranked = [
+            ScoredCandidate("A00000000000AA", "CCO", 0.9, {"library_similarity": 0.5}),
+            ScoredCandidate("B00000000000BB", "CCC", 0.1, {"analog_power": 0.7}),
+        ]
+        fixed = apply_library_override(ranked)
+        assert [c.inchikey14 for c in fixed] == [c.inchikey14 for c in ranked]
+
+    def test_empty_input(self):
+        from casmi.channels.fusion import apply_library_override
+
+        assert apply_library_override([]) == []
+
+    def test_respects_custom_threshold(self):
+        from casmi.channels.fusion import apply_library_override
+
+        ranked = [
+            ScoredCandidate("NOISY000000000", "CCC", 0.9, {"fpnet_score": 50.0}),
+            ScoredCandidate("GOOD0000000000", "CCO", 0.5, {"library_similarity": 0.97}),
+        ]
+        # Default threshold (0.999) shouldn't fire for 0.97.
+        assert apply_library_override(ranked)[0].inchikey14 == "NOISY000000000"
+        # A looser threshold should promote it.
+        assert apply_library_override(ranked, threshold=0.95)[0].inchikey14 == "GOOD0000000000"
+
+    def test_promotes_highest_similarity_when_multiple_qualify(self):
+        from casmi.channels.fusion import apply_library_override
+
+        ranked = [
+            ScoredCandidate("NOISY000000000", "CCC", 0.9, {}),
+            ScoredCandidate("GOOD0000000000", "CCO", 0.5, {"library_similarity": 0.9995}),
+            ScoredCandidate("BETTER00000000", "CCN", 0.4, {"library_similarity": 1.0}),
+        ]
+        assert apply_library_override(ranked)[0].inchikey14 == "BETTER00000000"

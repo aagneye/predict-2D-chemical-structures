@@ -58,6 +58,13 @@ def main() -> int:
     parser.add_argument(
         "--ranker", default=None, help="path to a fitted Reranker (.pkl); replaces weighted fusion"
     )
+    parser.add_argument(
+        "--denovo-checkpoint", default=None, help="enable Channel 6 with this checkpoint"
+    )
+    parser.add_argument("--denovo-device", default="cpu")
+    parser.add_argument(
+        "--denovo-beam-width", type=int, default=8, help="beam search width for de novo generation"
+    )
     args = parser.parse_args()
 
     split_data = np.load(args.split, allow_pickle=False)
@@ -134,6 +141,19 @@ def main() -> int:
         reranker = Reranker.load(args.ranker)
         print(f"[OK] loaded reranker: {args.ranker} ({len(reranker.models)} models)")
 
+    denovo_model = None
+    denovo_vocabulary = None
+    denovo_config = None
+    if args.denovo_checkpoint:
+        from casmi.channels.denovo import DenovoChannelConfig
+        from casmi.models.train_denovo import load_denovo_checkpoint
+
+        denovo_model, _, denovo_vocabulary = load_denovo_checkpoint(
+            args.denovo_checkpoint, device=args.denovo_device
+        )
+        denovo_config = DenovoChannelConfig(beam_width=args.denovo_beam_width)
+        print(f"[OK] loaded de novo checkpoint: {args.denovo_checkpoint}")
+
     result = run_pipeline(
         molecules,
         library,
@@ -145,6 +165,10 @@ def main() -> int:
         fpnet_config=fpnet_config,
         fpnet_device=args.fpnet_device,
         reranker=reranker,
+        denovo_model=denovo_model,
+        denovo_vocabulary=denovo_vocabulary,
+        denovo_config=denovo_config,
+        denovo_device=args.denovo_device,
     )
 
     scores = evaluate_predictions(
@@ -159,6 +183,8 @@ def main() -> int:
         active_channels.append("fragmentation")
     if args.fpnet_checkpoint:
         active_channels.append("fpnet")
+    if args.denovo_checkpoint:
+        active_channels.append("denovo")
     if args.ranker:
         active_channels.append("gbm_reranker")
     print(f"\n=== Active channels: {', '.join(active_channels)} ===")
@@ -193,14 +219,15 @@ def main() -> int:
         handle.write(
             "molecule_id,target_mass,n_spectra,n_candidates,"
             "best_library_sim,best_analog_sim,n_analogs,top_score,top_source,"
-            "best_fragmentation_score,best_fpnet_score,used_reranker\n"
+            "best_fragmentation_score,best_fpnet_score,used_reranker,n_denovo_candidates\n"
         )
         for d in result.diagnostics:
             handle.write(
                 f"{d.molecule_id},{d.target_mass:.5f},{d.n_spectra},{d.n_candidates},"
                 f"{d.best_library_similarity:.4f},{d.best_analog_similarity:.4f},"
                 f"{d.n_analogs},{d.top_score:.4f},{d.top_source},"
-                f"{d.best_fragmentation_score:.4f},{d.best_fpnet_score:.4f},{d.used_reranker}\n"
+                f"{d.best_fragmentation_score:.4f},{d.best_fpnet_score:.4f},{d.used_reranker},"
+                f"{d.n_denovo_candidates}\n"
             )
     print(f"\n[OK] wrote {out_dir}/summary.json and diagnostics.csv")
     return 0

@@ -31,10 +31,12 @@ import numpy as np
 
 from casmi.candidates.pool import CandidatePool
 from casmi.channels.analog import AnalogIndex, find_analogs, propagate_to_candidates
+from casmi.channels.denovo import DenovoChannelConfig, denovo_score_feature, generate_candidates
 from casmi.channels.fragmentation import FragmentationConfig, fragmentation_scores
 from casmi.channels.fusion import (
     DEFAULT_WEIGHTS,
     ScoredCandidate,
+    apply_library_override,
     fuse,
     mass_error_penalty,
 )
@@ -74,6 +76,10 @@ class MoleculeDiagnostics:
     #: Whether a learned reranker (rather than weighted fusion) produced the
     #: final ranking.
     used_reranker: bool = False
+    #: Number of de novo (Channel 6) candidates generated for this molecule
+    #: that were not already reachable via retrieval (0 if the channel was
+    #: not run, or nothing generated survived mass filtering/deduplication).
+    n_denovo_candidates: int = 0
 
 
 @dataclass
@@ -115,6 +121,10 @@ def build_scored_candidates(
     fpnet_model: Any | None = None,
     fpnet_config: Any | None = None,
     fpnet_device: str = "cpu",
+    denovo_model: Any | None = None,
+    denovo_vocabulary: Any | None = None,
+    denovo_config: DenovoChannelConfig | None = None,
+    denovo_device: str = "cpu",
 ) -> tuple[list[ScoredCandidate], dict[str, Any]]:
     """Assemble every channel's per-candidate features for one molecule.
 
@@ -124,6 +134,19 @@ def build_scored_candidates(
     label). Keeping this logic in one place means the features a trained
     reranker sees during training are guaranteed identical in construction to
     the features it sees at inference time.
+
+    Args:
+        denovo_model: A loaded
+            :class:`casmi.models.denovo.FingerprintToSmilesDecoder`, or
+            ``None`` to skip Channel 6 (de novo generation) entirely — the
+            default. Requires ``fpnet_model`` also be supplied, since FPNet's
+            predicted logits are the decoder's conditioning input; silently
+            skipped (not an error) if FPNet is unavailable.
+        denovo_vocabulary: The matching
+            :class:`casmi.models.smiles_tokenizer.SmilesVocabulary`.
+        denovo_config: Beam width / mass-tolerance settings; see
+            :class:`casmi.channels.denovo.DenovoChannelConfig`.
+        denovo_device: Device the decoder lives on.
 
     Returns:
         ``(candidates, context)`` where ``context`` carries the raw
@@ -184,11 +207,12 @@ def build_scored_candidates(
     # candidate fingerprints.
     fpnet_feature = np.zeros(candidate_indices.size, dtype=np.float32)
     fpnet_norm_feature = np.zeros(candidate_indices.size, dtype=np.float32)
+    fpnet_logits = None
     if fpnet_model is not None and candidate_indices.size:
         from casmi.models.fpnet import normalised_score, score_candidates
         from casmi.models.train import predict_logits
 
-        logits = predict_logits(
+        fpnet_logits = predict_logits(
             fpnet_model,
             spectra=molecule.spectra,
             precursor_mz=molecule.precursor_mz,
@@ -200,8 +224,8 @@ def build_scored_candidates(
             device=fpnet_device,
         )
         candidate_fp = pool.fingerprints(candidate_indices)
-        fpnet_feature = score_candidates(candidate_fp, logits).astype(np.float32)
-        fpnet_norm_feature = normalised_score(candidate_fp, logits).astype(np.float32)
+        fpnet_feature = score_candidates(candidate_fp, fpnet_logits).astype(np.float32)
+        fpnet_norm_feature = normalised_score(candidate_fp, fpnet_logits).astype(np.float32)
 
     candidates: list[ScoredCandidate] = []
     for position, index in enumerate(candidate_indices):
@@ -250,11 +274,42 @@ def build_scored_candidates(
                 )
             )
 
+    # Channel 6: de novo generation. The only channel able to reach a
+    # structure absent from both the reference library and the candidate
+    # pool (Class 3, see docs/06-implementation-plan.md). Requires FPNet's
+    # predicted logits as its conditioning input, so it is a no-op whenever
+    # FPNet itself was skipped — there is nothing to condition generation on.
+    denovo_candidates: list = []
+    if denovo_model is not None and denovo_vocabulary is not None and fpnet_logits is not None:
+        existing_keys = {c.inchikey14 for c in candidates}
+        generated = generate_candidates(
+            fpnet_logits,
+            denovo_model,
+            denovo_vocabulary,
+            target_mass=target,
+            config=denovo_config,
+            device=denovo_device,
+        )
+        for item in generated:
+            if item.inchikey14 in existing_keys:
+                continue  # already reachable by retrieval; generation adds nothing here
+            existing_keys.add(item.inchikey14)
+            denovo_candidates.append(item)
+            candidates.append(
+                ScoredCandidate(
+                    inchikey14=item.inchikey14,
+                    smiles=item.smiles,
+                    score=0.0,
+                    features={"denovo_score": denovo_score_feature(item.log_probability)},
+                )
+            )
+
     context = {
         "library_hits": library_hits,
         "analogs": analogs,
         "fragmentation_scores": fragmentation_feature,
         "fpnet_scores": fpnet_feature,
+        "denovo_candidates": denovo_candidates,
     }
     return candidates, context
 
@@ -271,6 +326,10 @@ def predict_molecule(
     fpnet_config: Any | None = None,
     fpnet_device: str = "cpu",
     reranker: Reranker | None = None,
+    denovo_model: Any | None = None,
+    denovo_vocabulary: Any | None = None,
+    denovo_config: DenovoChannelConfig | None = None,
+    denovo_device: str = "cpu",
 ) -> tuple[list[str], MoleculeDiagnostics]:
     """Produce a ranked SMILES list and diagnostics for one molecule.
 
@@ -291,6 +350,14 @@ def predict_molecule(
             score is still computed first so every candidate keeps a
             deterministic tiebreaker and diagnostics stay comparable across
             runs with and without a reranker.
+        denovo_model: A loaded
+            :class:`casmi.models.denovo.FingerprintToSmilesDecoder`, or
+            ``None`` to skip Channel 6 (de novo generation) entirely (the
+            default). Requires ``fpnet_model`` also be supplied.
+        denovo_vocabulary: The matching
+            :class:`casmi.models.smiles_tokenizer.SmilesVocabulary`.
+        denovo_config: Beam width / mass-tolerance settings.
+        denovo_device: Device the decoder lives on.
     """
     cfg = config or CFG
     target = molecule.target_mass
@@ -305,11 +372,16 @@ def predict_molecule(
         fpnet_model=fpnet_model,
         fpnet_config=fpnet_config,
         fpnet_device=fpnet_device,
+        denovo_model=denovo_model,
+        denovo_vocabulary=denovo_vocabulary,
+        denovo_config=denovo_config,
+        denovo_device=denovo_device,
     )
     library_hits = context["library_hits"]
     analogs = context["analogs"]
     fragmentation_feature = context["fragmentation_scores"]
     fpnet_feature = context["fpnet_scores"]
+    denovo_candidates = context["denovo_candidates"]
 
     fused_weights = weights or DEFAULT_WEIGHTS
     ranked = fuse(candidates, weights=fused_weights, top_n=cfg.top_n)
@@ -326,6 +398,12 @@ def predict_molecule(
         order = np.argsort(-probabilities)
         ranked = [ranked[i] for i in order]
         used_reranker = True
+
+    # Safety net: neither weighted fusion (which can still be edged out by a
+    # combination of secondary channels) nor the reranker (trained on a split
+    # where a clean library_similarity==1.0 is rare) is guaranteed to rank a
+    # near-perfect library spectral match first. See fusion.py's docstring.
+    ranked = apply_library_override(ranked)
 
     best_library = max((h.similarity for h in library_hits.values()), default=0.0)
     best_analog = analogs[0].similarity if analogs else 0.0
@@ -354,6 +432,7 @@ def predict_molecule(
         ),
         best_fpnet_score=float(fpnet_feature.max()) if fpnet_feature.size else 0.0,
         used_reranker=used_reranker,
+        n_denovo_candidates=len(denovo_candidates),
     )
     return [c.smiles for c in ranked if c.smiles], diagnostics
 
@@ -370,6 +449,10 @@ def run_pipeline(
     fpnet_config: Any | None = None,
     fpnet_device: str = "cpu",
     reranker: Reranker | None = None,
+    denovo_model: Any | None = None,
+    denovo_vocabulary: Any | None = None,
+    denovo_config: DenovoChannelConfig | None = None,
+    denovo_device: str = "cpu",
 ) -> PipelineResult:
     """Run the baseline over many molecules.
 
@@ -396,6 +479,10 @@ def run_pipeline(
             fpnet_config=fpnet_config,
             fpnet_device=fpnet_device,
             reranker=reranker,
+            denovo_model=denovo_model,
+            denovo_vocabulary=denovo_vocabulary,
+            denovo_config=denovo_config,
+            denovo_device=denovo_device,
         )
         result.predictions[molecule.molecule_id] = smiles
         result.diagnostics.append(diagnostics)

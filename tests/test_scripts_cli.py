@@ -314,6 +314,42 @@ class TestTrainFPNetScript:
         assert "--split" in result.stderr
 
 
+class TestTrainDenovoScript:
+    def test_short_training_run(self, train_parquet, tmp_path):
+        """Tiny run to prove the training CLI is wired correctly."""
+        pytest.importorskip("torch", reason="requires the optional 'train' extra")
+        split = tmp_path / "split.npz"
+        assert run_script(
+            "build_split.py", "--train", train_parquet, "--out", str(split), "--n-holdout", "4"
+        ).returncode == 0
+
+        result = run_script(
+            "train_denovo.py",
+            "--train", train_parquet,
+            "--split", str(split),
+            "--out", str(tmp_path / "ckpt"),
+            "--max-steps", "3",
+            "--batch-size", "4",
+            "--val-rows", "2",
+            "--device", "cpu",
+            "--d-model", "16",
+            "--n-heads", "2",
+            "--n-encoder-layers", "1",
+            "--n-decoder-layers", "1",
+            "--ffn-dim", "32",
+            "--fp-workers", "1",
+        )
+        assert result.returncode == 0, result.stderr
+        assert (tmp_path / "ckpt" / "denovo_final.pt").exists()
+
+    def test_split_argument_is_required(self, train_parquet, tmp_path):
+        result = run_script(
+            "train_denovo.py", "--train", train_parquet, "--out", str(tmp_path / "c")
+        )
+        assert result.returncode != 0
+        assert "--split" in result.stderr
+
+
 class TestRunBaselineChannelFlags:
     def test_fragmentation_flag_runs_end_to_end(self, train_parquet, baseline_artifacts, tmp_path):
         split, pool = baseline_artifacts
@@ -340,6 +376,53 @@ class TestRunBaselineChannelFlags:
         summary = json.loads((out / "summary.json").read_text())
         assert "active_channels" in summary
         assert "fragmentation" in summary["active_channels"]
+
+    def test_denovo_checkpoint_runs_end_to_end(self, train_parquet, baseline_artifacts, tmp_path):
+        """A trained de novo checkpoint must be loadable and usable by
+        run_baseline.py, and the active_channels/diagnostics must reflect it.
+        """
+        pytest.importorskip("torch", reason="requires the optional 'train' extra")
+        split, pool = baseline_artifacts
+
+        ckpt_dir = tmp_path / "denovo_ckpt"
+        assert run_script(
+            "train_denovo.py",
+            "--train", train_parquet,
+            "--split", split,
+            "--out", str(ckpt_dir),
+            "--max-steps", "3",
+            "--batch-size", "4",
+            "--val-rows", "2",
+            "--device", "cpu",
+            "--d-model", "16",
+            "--n-heads", "2",
+            "--n-encoder-layers", "1",
+            "--n-decoder-layers", "1",
+            "--ffn-dim", "32",
+            "--fp-workers", "1",
+        ).returncode == 0
+
+        out = tmp_path / "run_denovo"
+        result = run_script(
+            "run_baseline.py",
+            "--train", train_parquet,
+            "--split", split,
+            "--pool", pool,
+            "--out", str(out),
+            "--ppm", "50",
+            "--denovo-checkpoint", str(ckpt_dir / "denovo_final.pt"),
+            "--denovo-device", "cpu",
+        )
+        assert result.returncode == 0, result.stderr
+        assert "denovo" in result.stdout
+
+        summary = json.loads((out / "summary.json").read_text())
+        assert "denovo" in summary["active_channels"]
+
+        with open(out / "diagnostics.csv", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        assert rows
+        assert "n_denovo_candidates" in rows[0]
 
 
 class TestBuildRankTrainScript:
@@ -372,6 +455,41 @@ class TestBuildRankTrainScript:
             "--pool", pool,
             "--out", str(out),
             "--fragmentation",
+        )
+        assert result.returncode == 0, result.stderr
+        assert out.exists()
+
+    def test_with_denovo_checkpoint(self, train_parquet, baseline_artifacts, tmp_path):
+        pytest.importorskip("torch", reason="requires the optional 'train' extra")
+        split, pool = baseline_artifacts
+
+        ckpt_dir = tmp_path / "denovo_ckpt"
+        assert run_script(
+            "train_denovo.py",
+            "--train", train_parquet,
+            "--split", split,
+            "--out", str(ckpt_dir),
+            "--max-steps", "3",
+            "--batch-size", "4",
+            "--val-rows", "2",
+            "--device", "cpu",
+            "--d-model", "16",
+            "--n-heads", "2",
+            "--n-encoder-layers", "1",
+            "--n-decoder-layers", "1",
+            "--ffn-dim", "32",
+            "--fp-workers", "1",
+        ).returncode == 0
+
+        out = tmp_path / "rank_train_denovo.npz"
+        result = run_script(
+            "build_rank_train.py",
+            "--train", train_parquet,
+            "--split", split,
+            "--pool", pool,
+            "--out", str(out),
+            "--denovo-checkpoint", str(ckpt_dir / "denovo_final.pt"),
+            "--denovo-device", "cpu",
         )
         assert result.returncode == 0, result.stderr
         assert out.exists()

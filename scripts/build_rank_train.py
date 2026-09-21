@@ -49,6 +49,13 @@ def main() -> int:
     )
     parser.add_argument("--fpnet-device", default="cpu")
     parser.add_argument(
+        "--denovo-checkpoint", default=None, help="path to a trained de novo decoder checkpoint"
+    )
+    parser.add_argument("--denovo-device", default="cpu")
+    parser.add_argument(
+        "--denovo-beam-width", type=int, default=8, help="beam search width for de novo generation"
+    )
+    parser.add_argument(
         "--progress-every", type=int, default=25, help="print progress every N molecules"
     )
     args = parser.parse_args()
@@ -104,6 +111,19 @@ def main() -> int:
         fpnet_model, fpnet_config = load_checkpoint(args.fpnet_checkpoint, device=args.fpnet_device)
         print(f"[OK] loaded FPNet checkpoint: {args.fpnet_checkpoint}")
 
+    denovo_model = None
+    denovo_vocabulary = None
+    denovo_config = None
+    if args.denovo_checkpoint:
+        from casmi.channels.denovo import DenovoChannelConfig
+        from casmi.models.train_denovo import load_denovo_checkpoint
+
+        denovo_model, _, denovo_vocabulary = load_denovo_checkpoint(
+            args.denovo_checkpoint, device=args.denovo_device
+        )
+        denovo_config = DenovoChannelConfig(beam_width=args.denovo_beam_width)
+        print(f"[OK] loaded de novo checkpoint: {args.denovo_checkpoint}")
+
     analog_index = AnalogIndex(library)
     examples: list[RankTrainingExample] = []
     n_with_positive = 0
@@ -124,6 +144,10 @@ def main() -> int:
             fpnet_model=fpnet_model,
             fpnet_config=fpnet_config,
             fpnet_device=args.fpnet_device,
+            denovo_model=denovo_model,
+            denovo_vocabulary=denovo_vocabulary,
+            denovo_config=denovo_config,
+            denovo_device=args.denovo_device,
         )
         if not candidates:
             continue
