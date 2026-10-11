@@ -237,3 +237,52 @@ class TestHoldoutTruth:
         assert summary["train_rows"] + summary["val_rows"] == len(keys)
         total = sum(summary[f"class{c}_structures"] for c in (1, 2, 3))
         assert total == 10
+
+
+class TestForcedClass2:
+    def _table(self):
+        keys = np.array(
+            ["A", "A", "A", "B", "B", "C", "C", "D", "E", "E", "F", "G", "H", "I", "J", "K"],
+            dtype=object,
+        )
+        libs = np.array(
+            ["enveda-np-examples", "gnps", "riken", "enveda-np-examples", "gnps"]
+            + ["gnps"] * 11,
+            dtype=object,
+        )
+        return keys, libs
+
+    def test_forced_structures_are_class2_and_fully_removed_from_train(self):
+        keys, libs = self._table()
+        split = make_split(
+            keys, libs, SplitConfig(n_holdout=3, random_seed=0), forced_class2_keys={"A", "B"}
+        )
+        assert split.novelty_class["A"] == 2 and split.novelty_class["B"] == 2
+        train_keys = set(keys[split.train_mask])
+        assert "A" not in train_keys and "B" not in train_keys
+        # Every spectrum of a forced structure is a query, not just one.
+        assert int((keys[split.val_mask] == "A").sum()) == 3
+        assert "A" not in split.excluded_from_pool
+
+    def test_forced_structures_do_not_consume_the_sampled_budget(self):
+        keys, libs = self._table()
+        split = make_split(
+            keys, libs, SplitConfig(n_holdout=3, random_seed=0), forced_class2_keys={"A", "B"}
+        )
+        sampled = set(split.holdout_keys) - {"A", "B"}
+        assert len(sampled) == 3
+
+    def test_forced_only_split_with_zero_sampled_holdout(self):
+        keys, libs = self._table()
+        split = make_split(
+            keys, libs, SplitConfig(n_holdout=0, random_seed=0), forced_class2_keys={"A"}
+        )
+        assert set(split.holdout_keys) == {"A"}
+        verify_no_leakage(split, keys)
+
+    def test_unknown_forced_keys_are_ignored(self):
+        keys, libs = self._table()
+        split = make_split(
+            keys, libs, SplitConfig(n_holdout=2, random_seed=0), forced_class2_keys={"ZZZ"}
+        )
+        assert "ZZZ" not in split.novelty_class
