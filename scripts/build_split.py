@@ -110,6 +110,12 @@ def main() -> int:
         excluded_from_pool=np.asarray(sorted(split.excluded_from_pool), dtype=str),
     )
     print(f"[OK] wrote {out_path}")
+    if forced:
+        # The panel's keys, one per line, so run_baseline.py --cohort-keys can
+        # report the forced library (e.g. enveda-np-examples) on its own.
+        panel_path = out_path.with_suffix(".panel_keys.txt")
+        panel_path.write_text("\n".join(sorted(forced)) + "\n", encoding="utf-8")
+        print(f"[OK] wrote {panel_path} ({len(forced):,} panel keys)")
 
     with open(out_path.with_suffix(".summary.json"), "w", encoding="utf-8") as handle:
         json.dump({"summary": summary, "holdout_composition": composition}, handle, indent=2)
