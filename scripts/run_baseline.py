@@ -48,6 +48,12 @@ def main() -> int:
     parser.add_argument("--pool", required=True, help="output of scripts/build_pool.py")
     parser.add_argument("--out", default="runs/baseline")
     parser.add_argument("--limit", type=int, default=None, help="cap molecules, for smoke tests")
+    parser.add_argument(
+        "--cohort-keys",
+        default=None,
+        help="newline-delimited inchikey14 file; evaluate only held-out molecules in it "
+        "(e.g. the .panel_keys.txt build_split.py writes for --holdout-lib)",
+    )
     parser.add_argument("--ppm", type=float, default=None, help="override candidate ppm window")
     parser.add_argument(
         "--fragmentation", action="store_true", help="enable Channel 5 (MetFrag-lite)"
@@ -133,6 +139,16 @@ def main() -> int:
     pool = pool.exclude_keys(scorer_excluded - excluded)
     if len(pool) != before:
         print(f"[OK] removed {before - len(pool):,} more class-3 structures by scorer key")
+    if args.cohort_keys:
+        cohort = {
+            line.strip()
+            for line in Path(args.cohort_keys).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        }
+        keep_ids = [m for m in truth if m in cohort]
+        print(f"[INFO] cohort restriction: {len(keep_ids):,} of {len(truth):,} held-out molecules")
+        frame = frame[frame["molecule_id"].isin(keep_ids)]
+        truth = {k: truth[k] for k in keep_ids}
     if args.limit:
         keep_ids = list(truth)[: args.limit]
         frame = frame[frame["molecule_id"].isin(keep_ids)]
