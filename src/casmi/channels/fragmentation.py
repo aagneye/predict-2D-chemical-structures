@@ -24,6 +24,16 @@ structure should explain a systematically higher fraction of the observed
 intensity than a randomly chosen isomer at the same mass. It becomes useful
 exactly where Channels 1/2 have nothing to say — a genuinely novel structure
 with no close spectral relative in the training data.
+
+**Parsimony matters more than cleavage chemistry.** A community ablation on
+the competition's own natural-product panel (1,000 held-out molecules, four
+query sets) found that hand-written bond-propensity rules did nothing, while
+"how few cleavages does this candidate need" carried real signal: credit a
+peak that only a two-bond cleavage explains less than one a single cleavage
+explains (x0.6), weight intensities linearly rather than by square root,
+tighten the tolerance to 0.005 Da, and allow hydrogen shifts up to +3. The
+four together were worth +0.023 MRR@25 out of sample. Those are the defaults
+in :class:`FragmentationConfig`; the previous behaviour is one config away.
 """
 
 from __future__ import annotations
@@ -37,10 +47,14 @@ from casmi.adducts import PROTON_MASS
 from casmi.chem import mol_from_smiles
 
 #: Hydrogen shifts considered when matching a fragment mass to an observed
-#: peak. MS2 bond cleavage commonly transfers 1-2 extra hydrogens beyond the
+#: peak. MS2 bond cleavage commonly transfers extra hydrogens beyond the
 #: nominal fragment, in either direction, so a fixed set of shifts is checked
-#: rather than assuming exact valence preservation.
-H_SHIFTS: tuple[int, ...] = (-2, -1, 0, 1, 2)
+#: rather than assuming exact valence preservation. +3 earned its place in
+#: the held-out ablation (see module docstring); -3 did not.
+H_SHIFTS: tuple[int, ...] = (-2, -1, 0, 1, 2, 3)
+
+#: Monoisotopic hydrogen mass used for the shifts.
+_H_MASS = 1.00782503207
 
 #: Molecules with more acyclic bonds than this are skipped for the 2-break
 #: enumeration (combinatorial cost grows as O(bonds^2)); the whole-molecule
@@ -50,12 +64,23 @@ MAX_BONDS_FOR_DOUBLE_BREAK = 40
 
 @dataclass(frozen=True)
 class FragmentationConfig:
-    """Parameters for :func:`fragment_masses` / :func:`explain_score`."""
+    """Parameters for :func:`fragment_masses` / :func:`explain_score`.
+
+    Defaults are the parsimony-tuned values (module docstring). The legacy
+    behaviour is ``FragmentationConfig(mz_tolerance=0.01, h_shifts=(-2, -1, 0, 1, 2),
+    intensity_power=0.5, two_break_weight=1.0)``.
+    """
 
     max_breaks: int = 2
     max_bonds: int = MAX_BONDS_FOR_DOUBLE_BREAK
-    mz_tolerance: float = 0.01
+    mz_tolerance: float = 0.005
     h_shifts: tuple[int, ...] = H_SHIFTS
+    #: Exponent applied to peak intensities before weighting (1.0 linear,
+    #: 0.5 square root).
+    intensity_power: float = 1.0
+    #: Credit for a peak that only a two-bond cleavage can explain, relative
+    #: to a peak a single cleavage (or the intact molecule) explains.
+    two_break_weight: float = 0.6
 
 
 def _atom_hydrogen_mass(mol: Chem.Mol) -> np.ndarray | None:
@@ -109,23 +134,25 @@ def _connected_components(
     return components
 
 
-def fragment_masses(
+def fragment_masses_with_depth(
     smiles: str, config: FragmentationConfig | None = None
-) -> np.ndarray:
-    """Neutral masses of all fragments reachable by breaking 1-2 acyclic bonds.
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fragment masses plus the fewest bond breaks needed to reach each one.
 
-    Returns an empty array for unparseable SMILES, and the whole-molecule mass
-    alone (as a single-element array) when the bond count exceeds the
-    double-break cap or the molecule has no bonds at all.
+    Depth 0 is the intact molecule, 1 a single cleavage, 2 a double cleavage.
+    A fragment reachable both ways keeps the smaller depth: parsimony credits
+    the cheapest explanation. Returns two empty arrays for unparseable SMILES,
+    and the whole-molecule mass alone (depth 0) when the bond count exceeds
+    the double-break cap or the molecule has no bonds at all.
     """
     cfg = config or FragmentationConfig()
     mol = mol_from_smiles(smiles)
     if mol is None:
-        return np.zeros(0, dtype=np.float64)
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.int8)
 
     atom_masses = _atom_hydrogen_mass(mol)
     if atom_masses is None:
-        return np.zeros(0, dtype=np.float64)
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.int8)
 
     n_atoms = mol.GetNumAtoms()
     whole_mass = float(atom_masses.sum())
@@ -133,20 +160,43 @@ def fragment_masses(
     n_bonds = len(bonds)
 
     if n_bonds == 0 or n_bonds > cfg.max_bonds:
-        return np.array([whole_mass], dtype=np.float64)
+        return np.array([whole_mass], dtype=np.float64), np.zeros(1, dtype=np.int8)
 
-    masses = {whole_mass}
+    # mass -> minimum depth. Masses are rounded to 1e-6 Da so the same fragment
+    # reached via two different breaks collapses to one key.
+    depth: dict[float, int] = {round(whole_mass, 6): 0}
     for i in range(n_bonds):
         for component in _connected_components(n_atoms, bonds, {i}):
-            masses.add(float(atom_masses[component].sum()))
+            m = round(float(atom_masses[component].sum()), 6)
+            if depth.get(m, 99) > 1:
+                depth[m] = 1
 
     if cfg.max_breaks >= 2:
         for i in range(n_bonds):
             for j in range(i + 1, n_bonds):
                 for component in _connected_components(n_atoms, bonds, {i, j}):
-                    masses.add(float(atom_masses[component].sum()))
+                    m = round(float(atom_masses[component].sum()), 6)
+                    if m not in depth:
+                        depth[m] = 2
 
-    return np.array(sorted(masses), dtype=np.float64)
+    order = sorted(depth)
+    return (
+        np.array(order, dtype=np.float64),
+        np.array([depth[m] for m in order], dtype=np.int8),
+    )
+
+
+def fragment_masses(
+    smiles: str, config: FragmentationConfig | None = None
+) -> np.ndarray:
+    """Neutral masses of all fragments reachable by breaking 1-2 acyclic bonds.
+
+    Depth-free view of :func:`fragment_masses_with_depth`: an empty array for
+    unparseable SMILES, the whole-molecule mass alone when the bond count
+    exceeds the double-break cap or the molecule has no bonds at all.
+    """
+    masses, _ = fragment_masses_with_depth(smiles, config=config)
+    return masses
 
 
 def explain_score(
@@ -155,16 +205,24 @@ def explain_score(
     peak_intensity: np.ndarray,
     positive_mode: bool = True,
     config: FragmentationConfig | None = None,
+    fragment_depth: np.ndarray | None = None,
 ) -> float:
-    """Fraction of observed peak intensity explained by ``fragment_mass``.
+    """Parsimony-weighted fraction of observed intensity explained by the fragments.
 
     Each fragment mass is checked as an ion at every configured hydrogen
     shift, protonated or deprotonated according to ``positive_mode``. A peak
-    counts as explained if any resulting ion mass falls within
-    ``config.mz_tolerance``. The score is the intensity-weighted (square-root
-    scaled, matching the spectral-cleaning convention elsewhere in this
-    package) fraction of the spectrum's total intensity that is explained —
-    0.0 if there is nothing to explain or nothing explains it.
+    is explained if any resulting ion mass falls within ``config.mz_tolerance``;
+    it earns full credit when the intact molecule or a single cleavage
+    explains it and ``config.two_break_weight`` when only a double cleavage
+    does. The score is the (``intensity_power``-scaled) intensity-weighted
+    credit over the spectrum's total intensity; 0.0 if there is nothing to
+    explain or nothing explains it.
+
+    Args:
+        fragment_depth: Per-fragment minimum cleavage count aligned with
+            ``fragment_mass`` (see :func:`fragment_masses_with_depth`). When
+            omitted every fragment counts as depth 1 (full credit), which
+            reproduces the depth-free score.
     """
     cfg = config or FragmentationConfig()
     fragment_mass = np.asarray(fragment_mass, dtype=np.float64)
@@ -173,24 +231,36 @@ def explain_score(
     if fragment_mass.size == 0 or peak_mz.size == 0:
         return 0.0
 
+    if fragment_depth is None:
+        credit = np.ones(fragment_mass.size, dtype=np.float64)
+    else:
+        fragment_depth = np.asarray(fragment_depth)
+        if fragment_depth.shape != fragment_mass.shape:
+            raise ValueError("fragment_depth must align with fragment_mass")
+        credit = np.where(fragment_depth >= 2, cfg.two_break_weight, 1.0).astype(np.float64)
+
     charge_mass = PROTON_MASS if positive_mode else -PROTON_MASS
     ions = np.concatenate(
-        [fragment_mass + shift * 1.00782503207 + charge_mass for shift in cfg.h_shifts]
+        [fragment_mass + shift * _H_MASS + charge_mass for shift in cfg.h_shifts]
     )
-    ions = np.sort(ions)
+    ion_credit = np.concatenate([credit for _ in cfg.h_shifts])
+    order = np.argsort(ions, kind="stable")
+    ions = ions[order]
+    ion_credit = ion_credit[order]
 
-    weights = np.sqrt(np.clip(peak_intensity, 0.0, None))
+    weights = np.power(np.clip(peak_intensity, 0.0, None), cfg.intensity_power)
     total = float(weights.sum())
     if total <= 0.0:
         return 0.0
 
-    insertion = np.searchsorted(ions, peak_mz)
-    explained = np.zeros(peak_mz.size, dtype=bool)
-    for offset in (-1, 0):
-        candidate_idx = np.clip(insertion + offset, 0, ions.size - 1)
-        explained |= np.abs(ions[candidate_idx] - peak_mz) <= cfg.mz_tolerance
+    lo = np.searchsorted(ions, peak_mz - cfg.mz_tolerance, side="left")
+    hi = np.searchsorted(ions, peak_mz + cfg.mz_tolerance, side="right")
+    explained = np.zeros(peak_mz.size, dtype=np.float64)
+    for k in range(peak_mz.size):
+        if hi[k] > lo[k]:
+            explained[k] = float(ion_credit[lo[k] : hi[k]].max())
 
-    return float(weights[explained].sum() / total)
+    return float((weights * explained).sum() / total)
 
 
 def fragmentation_scores(
@@ -218,17 +288,25 @@ def fragmentation_scores(
     if not spectra:
         return scores
 
-    fragment_cache: dict[str, np.ndarray] = {}
+    fragment_cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
     for i, smiles in enumerate(candidate_smiles):
-        fragments = fragment_cache.get(smiles)
-        if fragments is None:
-            fragments = fragment_masses(smiles, config=cfg)
-            fragment_cache[smiles] = fragments
+        cached = fragment_cache.get(smiles)
+        if cached is None:
+            cached = fragment_masses_with_depth(smiles, config=cfg)
+            fragment_cache[smiles] = cached
+        fragments, depths = cached
         if fragments.size == 0:
             continue
         best = 0.0
         for mz, intensity in spectra:
-            score = explain_score(fragments, mz, intensity, positive_mode=positive_mode, config=cfg)
+            score = explain_score(
+                fragments,
+                mz,
+                intensity,
+                positive_mode=positive_mode,
+                config=cfg,
+                fragment_depth=depths,
+            )
             if score > best:
                 best = score
         scores[i] = best
