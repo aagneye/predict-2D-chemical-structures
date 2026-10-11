@@ -31,8 +31,20 @@ uv pip install -q --system-site-packages pip 2>/dev/null || true
     --platform manylinux_2_28_x86_64 \
     -d "$STAGE" 2>&1 | tail -2
 
-echo "=== pool ==="
-cp "$CHECKPOINTS/pool.npz" "$STAGE/pool.npz"
+echo "=== pool (v2: train + COCONUT + PubChemLite, scorer-keyed) ==="
+if [ -f "$CHECKPOINTS/pool_v2.npz" ]; then
+    cp "$CHECKPOINTS/pool_v2.npz" "$STAGE/pool.npz"
+else
+    echo "WARNING: no pool_v2.npz; shipping the old train-only pool"
+    cp "$CHECKPOINTS/pool.npz" "$STAGE/pool.npz"
+fi
+
+echo "=== popularity prior ==="
+if [ -f "$CHECKPOINTS/popularity.npz" ]; then
+    cp "$CHECKPOINTS/popularity.npz" "$STAGE/popularity.npz"
+else
+    echo "WARNING: no popularity.npz found; prior will be disabled in the notebook"
+fi
 
 echo "=== fpnet checkpoint (Channel 4) ==="
 if [ -f "$CHECKPOINTS/fpnet_final.pt" ]; then
@@ -42,10 +54,10 @@ else
 fi
 
 echo "=== reranker (GBM ensemble) ==="
-if [ -f "$WORK/checkpoints/ranker.pkl" ]; then
-    cp "$WORK/checkpoints/ranker.pkl" "$STAGE/ranker.pkl"
+if [ -f "$CHECKPOINTS/ranker.pkl" ]; then
+    cp "$CHECKPOINTS/ranker.pkl" "$STAGE/ranker.pkl"
 else
-    echo "WARNING: no ranker.pkl found at $WORK/checkpoints/ranker.pkl — reranker will be skipped"
+    echo "WARNING: no ranker.pkl found at $CHECKPOINTS/ranker.pkl — reranker will be skipped"
 fi
 
 echo "=== code ==="
