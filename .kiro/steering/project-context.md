@@ -13,16 +13,17 @@ Method plan: `docs/04-method-landscape.md`. Community/competitor intel
 **Concrete build plan (baseline, pipeline, validation, compute):
 `docs/06-implementation-plan.md` — start here for "what do I do next".**
 
-## CRITICAL: the visible test set leaks
+## CORRECTION (2026-10-11): the public leaderboard IS a real score
 
-The visible `test.parquet` is a sample of `train.parquet` (organizer-
-documented). Verified evidence: the rank-1 public notebook's own diagnostics
-show `best_library_sim` == exactly 1.0 for 100% of 400 visible test
-molecules, with its analog + neural channels contributing 0.0%. **The public
-leaderboard is therefore not a usable optimization target** — it mostly
-measures whether you implemented a library lookup. All iteration must happen
-against our own held-out split (by `inchikey14`, NP-weighted, with
-synthesized Class-1/2/3 proxies). See `06-implementation-plan.md`.
+Earlier sessions concluded the public LB was leak-driven and unusable. That
+was wrong. Kaggle re-runs the notebook on the REAL hidden test set and the
+public LB is computed on ~31% of it (~130 molecules). The visible
+`test.parquet` leak only affects what the notebook prints during the
+editor/commit run. Our honest held-out 0.592 vs public 0.148 proves the
+held-out split is the unrepresentative number, not the LB. Current rank:
+2405/3040; top is 0.484. Full diagnosis and plan:
+`docs/08-status-2026-10-11-gap-analysis.md`. Sections below that call the LB
+"not usable" are historical and superseded.
 
 ## Repo
 
