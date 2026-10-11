@@ -58,12 +58,21 @@ def main() -> int:
     parser.add_argument(
         "--progress-every", type=int, default=25, help="print progress every N molecules"
     )
+    parser.add_argument(
+        "--popularity",
+        default=None,
+        help="PubChem popularity prior (.npz or pool_popularity.csv); adds the popularity feature",
+    )
     args = parser.parse_args()
 
     split_data = np.load(args.split, allow_pickle=False)
     train_mask = split_data["train_mask"]
     val_mask = split_data["val_mask"]
     excluded = {str(k) for k in split_data["excluded_from_pool"]}
+    holdout_keys = [str(k) for k in split_data["holdout_keys"]]
+    novelty = dict(
+        zip(holdout_keys, [int(c) for c in split_data["novelty_class"]], strict=True)
+    )
 
     print(f"[INFO] split: {train_mask.sum():,} train rows, {val_mask.sum():,} held-out rows")
     library = load_spectral_library(args.train, keep_rows=train_mask)
@@ -95,6 +104,13 @@ def main() -> int:
         .set_index("molecule_id")["normalized_smiles"]
         .to_dict()
     )
+    # Same scorer-key exclusion as run_baseline.py: the pool is keyed by the
+    # recomputed scorer key, the split by the stored column.
+    scorer_excluded = {
+        k for m, smi in truth.items() if novelty.get(m) == 3 and (k := inchikey14(smi))
+    }
+    pool = pool.exclude_keys(scorer_excluded - excluded)
+    print(f"[OK] pool after scorer-key class-3 exclusion: {len(pool):,} structures")
     if args.limit:
         keep_ids = list(truth)[: args.limit]
         frame = frame[frame["molecule_id"].isin(keep_ids)]
@@ -124,6 +140,13 @@ def main() -> int:
         denovo_config = DenovoChannelConfig(beam_width=args.denovo_beam_width)
         print(f"[OK] loaded de novo checkpoint: {args.denovo_checkpoint}")
 
+    popularity = None
+    if args.popularity:
+        from casmi.priors import PopularityPrior
+
+        popularity = PopularityPrior.load(args.popularity)
+        print(f"[OK] loaded popularity prior: {len(popularity):,} structures")
+
     analog_index = AnalogIndex(library)
     examples: list[RankTrainingExample] = []
     n_with_positive = 0
@@ -148,6 +171,7 @@ def main() -> int:
             denovo_vocabulary=denovo_vocabulary,
             denovo_config=denovo_config,
             denovo_device=args.denovo_device,
+            popularity=popularity,
         )
         if not candidates:
             continue
