@@ -164,3 +164,26 @@ fine for prize-eligible solutions; **NIST is forbidden** (disqualification).
   run took 55 min for 1,213, so budget ~2 h CPU, far less on GPU.
 - Hosts updated the rerun test data on 2026-10-08 (electron-mass fix) and
   re-scored all submissions.
+
+## 8. Build log (same day)
+
+Implemented and pushed (atomic commits `c0100b3..5fb8e5e`):
+
+| Change | Where | Why |
+|---|---|---|
+| Scorer-key fix: strip stereo before tautomer canonicalisation | `src/casmi/chem.py` | matches the official metric; the old key mis-identified skeletons whose stereocentre pins a tautomer |
+| PubChem popularity prior as feature + post-rank blend | `src/casmi/priors.py`, pipeline/fusion/ranker, `--popularity`, `--popularity-mu` | the single biggest isomer-separation signal measured by the community (40% → 93% top-1 on a 250-NP panel) |
+| Parallel, scorer-keyed pool build (COCONUT + PubChemLite + train) | `scripts/build_pool.py`, `pool_from_records` | unlocks class 2; ~1.1M structures in minutes on 48 cores |
+| Natural-product panel split | `--holdout-lib enveda-np-examples`, `--cohort-keys` | an honest timsTOF class-2 proxy instead of the old split |
+| Fragmentation parsimony defaults | `src/casmi/channels/fragmentation.py` | +0.023 held-out in the community ablation |
+| Kaggle notebook: GPU, prior, reranker feature guard; sklearn 1.6 pin | `kaggle/submission/`, `pyproject.toml` | no more silent fallbacks or pickle-version crashes |
+
+Running on the VM (do not poll; read the logs when back):
+`/mnt/casmi/logs/phase_a.log` (pool v2 → prior → split v2 → six baseline
+measurements, artifacts to `~/casmi_checkpoints/`) and
+`/mnt/casmi/logs/fpnet_v2.log` (FPNet retrain on the new split, GPU 3).
+
+Next: rebuild `rank_train.npz` with `--popularity --fragmentation` and
+`fpnet_v2`, retrain the ranker, measure, `build_kaggle_dataset.sh`, push the
+kernel, submit. Then the PubChem 106M channel and ICEBERG/GLACIER isomer
+re-scoring (phase B).
