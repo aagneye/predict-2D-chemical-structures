@@ -97,6 +97,7 @@ def make_split(
     ingest_lib: np.ndarray,
     config: SplitConfig | None = None,
     database_keys: set[str] | None = None,
+    forced_class2_keys: set[str] | None = None,
 ) -> Split:
     """Build a structure-level split with synthetic novelty classes.
 
@@ -108,6 +109,13 @@ def make_split(
             When given, class-3 candidates are drawn preferentially from
             structures *absent* from it, so the class-3 cohort is genuinely
             un-retrievable rather than merely un-spectra'd.
+        forced_class2_keys: Structures that must be held out as class 2 (every
+            spectrum removed from the library, structure kept in the pool)
+            regardless of sampling, *in addition to* the ``n_holdout`` sampled
+            structures. Used to turn a whole library — e.g. the 250
+            ``enveda-np-examples`` compounds measured on the test instrument —
+            into a "known natural product, no reference spectrum" panel, the
+            scenario the hidden test is dominated by.
 
     Returns:
         A :class:`Split`. Note that class-1 rows are *not* fully removed from
@@ -130,18 +138,23 @@ def make_split(
         if key:
             spectra_per_key[key] += 1
 
-    keys = sorted(structure_libs)
-    if not keys:
+    forced = {k for k in (forced_class2_keys or set()) if k in structure_libs}
+    keys = sorted(k for k in structure_libs if k not in forced)
+    if not keys and not forced:
         raise ValueError("no structures to split")
 
     weights = np.array(
         [_sampling_weight(structure_libs[k], cfg.library_weights) for k in keys], dtype=np.float64
     )
-    weights /= weights.sum()
+    if weights.size:
+        weights /= weights.sum()
 
     n_holdout = min(cfg.n_holdout, len(keys))
-    chosen_idx = rng.choice(len(keys), size=n_holdout, replace=False, p=weights)
-    holdout = [keys[i] for i in chosen_idx]
+    if n_holdout:
+        chosen_idx = rng.choice(len(keys), size=n_holdout, replace=False, p=weights)
+        holdout = [keys[i] for i in chosen_idx]
+    else:
+        holdout = []
 
     # Assign novelty classes. Class 1 requires a spare sibling spectrum;
     # class 3 prefers structures the external database does not know.
@@ -174,6 +187,8 @@ def make_split(
     for k in class1:
         novelty_class[k] = CLASS_LIBRARY
     for k in class2:
+        novelty_class[k] = CLASS_DATABASE
+    for k in sorted(forced):
         novelty_class[k] = CLASS_DATABASE
     for k in class3:
         novelty_class[k] = CLASS_NOVEL
