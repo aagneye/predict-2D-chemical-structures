@@ -68,10 +68,10 @@ class PopularityPrior:
         table: dict[str, float] = {}
         with open(path, newline="", encoding="utf-8") as handle:
             reader = csv.DictReader(handle)
-            if reader.fieldnames is None or key_column not in reader.fieldnames:
-                raise ValueError(f"{path} has no {key_column!r} column; columns={reader.fieldnames}")
-            if value_column not in reader.fieldnames:
-                raise ValueError(f"{path} has no {value_column!r} column; columns={reader.fieldnames}")
+            columns = reader.fieldnames or []
+            for needed in (key_column, value_column):
+                if needed not in columns:
+                    raise ValueError(f"{path} has no {needed!r} column; columns={columns}")
             for row in reader:
                 key = (row.get(key_column) or "").strip()
                 raw = row.get(value_column)
