@@ -43,6 +43,7 @@ from casmi.channels.fusion import (
 from casmi.channels.library import library_search
 from casmi.config import CFG, Config
 from casmi.data.loaders import QueryMolecule, SpectralLibrary
+from casmi.priors import PopularityPrior, popularity_blend
 
 if TYPE_CHECKING:
     from casmi.channels.ranker import Reranker
@@ -125,6 +126,7 @@ def build_scored_candidates(
     denovo_vocabulary: Any | None = None,
     denovo_config: DenovoChannelConfig | None = None,
     denovo_device: str = "cpu",
+    popularity: PopularityPrior | None = None,
 ) -> tuple[list[ScoredCandidate], dict[str, Any]]:
     """Assemble every channel's per-candidate features for one molecule.
 
@@ -147,6 +149,10 @@ def build_scored_candidates(
         denovo_config: Beam width / mass-tolerance settings; see
             :class:`casmi.channels.denovo.DenovoChannelConfig`.
         denovo_device: Device the decoder lives on.
+        popularity: Optional :class:`casmi.priors.PopularityPrior`. When
+            supplied, every candidate (pool, out-of-pool library hit, de novo)
+            gets a ``popularity`` feature: how documented the structure is in
+            PubChem. Unknown structures get 0.0.
 
     Returns:
         ``(candidates, context)`` where ``context`` carries the raw
@@ -256,6 +262,7 @@ def build_scored_candidates(
                     "fragmentation_score": float(fragmentation_feature[position]),
                     "fpnet_score": float(fpnet_feature[position]),
                     "fpnet_normalised_score": float(fpnet_norm_feature[position]),
+                    "popularity": popularity.get(key) if popularity is not None else 0.0,
                 },
             )
         )
@@ -270,7 +277,10 @@ def build_scored_candidates(
                     inchikey14=key,
                     smiles=hit.smiles,
                     score=0.0,
-                    features={"library_similarity": hit.similarity},
+                    features={
+                        "library_similarity": hit.similarity,
+                        "popularity": popularity.get(key) if popularity is not None else 0.0,
+                    },
                 )
             )
 
@@ -300,7 +310,12 @@ def build_scored_candidates(
                     inchikey14=item.inchikey14,
                     smiles=item.smiles,
                     score=0.0,
-                    features={"denovo_score": denovo_score_feature(item.log_probability)},
+                    features={
+                        "denovo_score": denovo_score_feature(item.log_probability),
+                        "popularity": (
+                            popularity.get(item.inchikey14) if popularity is not None else 0.0
+                        ),
+                    },
                 )
             )
 
@@ -330,6 +345,8 @@ def predict_molecule(
     denovo_vocabulary: Any | None = None,
     denovo_config: DenovoChannelConfig | None = None,
     denovo_device: str = "cpu",
+    popularity: PopularityPrior | None = None,
+    popularity_mu: float = 0.0,
 ) -> tuple[list[str], MoleculeDiagnostics]:
     """Produce a ranked SMILES list and diagnostics for one molecule.
 
@@ -358,6 +375,13 @@ def predict_molecule(
             :class:`casmi.models.smiles_tokenizer.SmilesVocabulary`.
         denovo_config: Beam width / mass-tolerance settings.
         denovo_device: Device the decoder lives on.
+        popularity: Optional PubChem popularity prior; adds the ``popularity``
+            feature to every candidate (see :func:`build_scored_candidates`).
+        popularity_mu: If > 0, re-rank the final list by
+            ``z(score) + popularity_mu * popularity`` after fusion/reranking
+            (the public lineage's post-rank blend, measured at +0.010 LB with
+            mu=0.15). 0.0 leaves the order to fusion/the reranker, which
+            still see ``popularity`` as a feature.
     """
     cfg = config or CFG
     target = molecule.target_mass
@@ -376,6 +400,7 @@ def predict_molecule(
         denovo_vocabulary=denovo_vocabulary,
         denovo_config=denovo_config,
         denovo_device=denovo_device,
+        popularity=popularity,
     )
     library_hits = context["library_hits"]
     analogs = context["analogs"]
@@ -397,7 +422,16 @@ def predict_molecule(
         probabilities = reranker.predict_proba(matrix)
         order = np.argsort(-probabilities)
         ranked = [ranked[i] for i in order]
+        final_scores = probabilities[order]
         used_reranker = True
+    else:
+        final_scores = np.array([c.score for c in ranked], dtype=np.float64)
+
+    if popularity_mu > 0.0 and len(ranked) > 1:
+        pop = np.array([c.features.get("popularity", 0.0) for c in ranked], dtype=np.float64)
+        blended = popularity_blend(final_scores, pop, popularity_mu)
+        order = np.argsort(-blended, kind="stable")
+        ranked = [ranked[i] for i in order]
 
     # Safety net: neither weighted fusion (which can still be edged out by a
     # combination of secondary channels) nor the reranker (trained on a split
@@ -453,6 +487,8 @@ def run_pipeline(
     denovo_vocabulary: Any | None = None,
     denovo_config: DenovoChannelConfig | None = None,
     denovo_device: str = "cpu",
+    popularity: PopularityPrior | None = None,
+    popularity_mu: float = 0.0,
 ) -> PipelineResult:
     """Run the baseline over many molecules.
 
@@ -483,6 +519,8 @@ def run_pipeline(
             denovo_vocabulary=denovo_vocabulary,
             denovo_config=denovo_config,
             denovo_device=denovo_device,
+            popularity=popularity,
+            popularity_mu=popularity_mu,
         )
         result.predictions[molecule.molecule_id] = smiles
         result.diagnostics.append(diagnostics)
