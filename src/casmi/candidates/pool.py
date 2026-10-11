@@ -192,6 +192,66 @@ def build_pool(
     )
 
 
+def pool_from_records(
+    keys: Sequence[str | None],
+    smiles: Sequence[str],
+    packed_fps: Sequence[np.ndarray | None],
+    masses: Sequence[float],
+    n_bits: int,
+) -> CandidatePool:
+    """Assemble a pool from already-computed per-structure records.
+
+    The per-structure work (parsing, fingerprinting, tautomer-canonical
+    keying) is the expensive part of a pool build and parallelises trivially
+    across processes, but RDKit generators are not picklable so it has to
+    happen in worker processes that return plain arrays. This constructor
+    takes those arrays and does only the cheap serial part: drop failures,
+    deduplicate by ``inchikey14`` (first occurrence wins, so pass the more
+    trusted source first) and sort by mass.
+
+    Args:
+        keys: Tautomer-canonical ``inchikey14`` per structure, ``None`` where
+            keying failed.
+        smiles: SMILES per structure.
+        packed_fps: ``np.packbits``-packed fingerprint per structure, ``None``
+            where fingerprinting failed.
+        masses: Neutral monoisotopic mass per structure.
+        n_bits: Unpacked fingerprint width the packed rows encode.
+    """
+    if not (len(keys) == len(smiles) == len(packed_fps) == len(masses)):
+        raise ValueError("records must be the same length")
+
+    seen: set[str] = set()
+    kept_idx: list[int] = []
+    for i, (key, fp, mass) in enumerate(zip(keys, packed_fps, masses, strict=True)):
+        if not key or fp is None or key in seen:
+            continue
+        if not np.isfinite(mass):
+            continue
+        seen.add(key)
+        kept_idx.append(i)
+
+    if not kept_idx:
+        return CandidatePool(
+            mass=np.zeros(0),
+            keys=np.asarray([], dtype=object),
+            smiles=np.asarray([], dtype=object),
+            packed_fp=np.zeros((0, (n_bits + 7) // 8), dtype=np.uint8),
+            n_bits=n_bits,
+        )
+
+    mass_arr = np.asarray([masses[i] for i in kept_idx], dtype=np.float64)
+    order = np.argsort(mass_arr, kind="stable")
+    ordered = [kept_idx[i] for i in order]
+    return CandidatePool(
+        mass=mass_arr[order],
+        keys=np.asarray([keys[i] for i in ordered], dtype=object),
+        smiles=np.asarray([smiles[i] for i in ordered], dtype=object),
+        packed_fp=np.stack([packed_fps[i] for i in ordered]),
+        n_bits=n_bits,
+    )
+
+
 def merge_pools(*pools: CandidatePool) -> CandidatePool:
     """Concatenate pools, deduplicating by ``inchikey14`` and re-sorting by mass.
 
