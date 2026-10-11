@@ -35,6 +35,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from casmi.candidates.pool import CandidatePool
+from casmi.chem import inchikey14
 from casmi.data.loaders import load_spectral_library, query_molecules_from_table
 from casmi.eval.metrics import evaluate_predictions, format_summary, summarise_by_class
 from casmi.pipeline import run_pipeline
@@ -64,6 +65,18 @@ def main() -> int:
     parser.add_argument("--denovo-device", default="cpu")
     parser.add_argument(
         "--denovo-beam-width", type=int, default=8, help="beam search width for de novo generation"
+    )
+    parser.add_argument(
+        "--popularity",
+        default=None,
+        help="PubChem popularity prior (.npz from PopularityPrior.save or pool_popularity.csv); "
+        "adds the popularity feature to every candidate",
+    )
+    parser.add_argument(
+        "--popularity-mu",
+        type=float,
+        default=0.0,
+        help="post-rank blend z(score) + mu * popularity (0 disables; public lineage uses 0.15)",
     )
     args = parser.parse_args()
 
@@ -110,6 +123,16 @@ def main() -> int:
     truth = (
         frame.drop_duplicates("molecule_id").set_index("molecule_id")["normalized_smiles"].to_dict()
     )
+    # The pool is keyed by the scorer key (recomputed from SMILES), while the
+    # split stores train's inchikey14 column; the two disagree for ~1.6% of
+    # structures. Exclude class 3 under BOTH keys so it is genuinely unreachable.
+    scorer_excluded = {
+        k for m, smi in truth.items() if novelty.get(m) == 3 and (k := inchikey14(smi))
+    }
+    before = len(pool)
+    pool = pool.exclude_keys(scorer_excluded - excluded)
+    if len(pool) != before:
+        print(f"[OK] removed {before - len(pool):,} more class-3 structures by scorer key")
     if args.limit:
         keep_ids = list(truth)[: args.limit]
         frame = frame[frame["molecule_id"].isin(keep_ids)]
@@ -154,6 +177,17 @@ def main() -> int:
         denovo_config = DenovoChannelConfig(beam_width=args.denovo_beam_width)
         print(f"[OK] loaded de novo checkpoint: {args.denovo_checkpoint}")
 
+    popularity = None
+    if args.popularity:
+        from casmi.priors import PopularityPrior
+
+        popularity = PopularityPrior.load(args.popularity)
+        covered = sum(1 for k in pool.keys if k in popularity)
+        print(
+            f"[OK] loaded popularity prior: {len(popularity):,} structures, "
+            f"covers {covered / max(len(pool), 1):.1%} of the pool"
+        )
+
     result = run_pipeline(
         molecules,
         library,
@@ -169,6 +203,8 @@ def main() -> int:
         denovo_vocabulary=denovo_vocabulary,
         denovo_config=denovo_config,
         denovo_device=args.denovo_device,
+        popularity=popularity,
+        popularity_mu=args.popularity_mu,
     )
 
     scores = evaluate_predictions(
@@ -185,6 +221,8 @@ def main() -> int:
         active_channels.append("fpnet")
     if args.denovo_checkpoint:
         active_channels.append("denovo")
+    if args.popularity:
+        active_channels.append(f"popularity(mu={args.popularity_mu})")
     if args.ranker:
         active_channels.append("gbm_reranker")
     print(f"\n=== Active channels: {', '.join(active_channels)} ===")
