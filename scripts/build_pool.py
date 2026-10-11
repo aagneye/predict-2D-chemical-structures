@@ -1,28 +1,80 @@
 """Build the candidate structure pool and precompute fingerprints.
 
-Sources are COCONUT (natural-product specific) and the training structures.
-Blind PubChem expansion is intentionally not offered: it degraded ranking for
-the reference solution by flooding the pool with decoys. ChEBI/LipidMaps can be
-added via ``--extra-smiles`` but must earn inclusion on our own split first.
+Sources, in precedence order: COCONUT (natural-product specific), any extra
+CSVs (PubChemLite, ChEBI/LIPID MAPS; PubChemLite is what unlocks class-2
+molecules that COCONUT lacks), then the training structures. Blind full-PubChem
+isomer expansion is intentionally not offered here: it degraded ranking for
+the reference solution by flooding the pool with decoys; a separate
+PubChem-only channel is the right home for it.
 
-Run on the Azure box; the resulting ``.npz`` is small enough to attach to the
-Kaggle notebook as a Dataset.
+Every structure is keyed by the **scorer key** (stereo-stripped,
+tautomer-canonical InChIKey14, :func:`casmi.chem.inchikey14`) computed from its
+SMILES, never a stored ``inchikey14`` column, which disagrees with the scorer
+for ~1.6% of train structures and ~10% of COCONUT. Per-structure work runs in
+a process pool: ~1.1M structures take minutes on 60 cores instead of hours.
+
+Run on the Azure box; the resulting ``.npz`` is attached to the Kaggle
+notebook as a Dataset.
 
 Example:
     python scripts/build_pool.py --train data/raw/train.parquet \\
-        --coconut data/raw/coconut.csv --out data/processed/pool.npz
+        --coconut external/coconut_candidates.csv \\
+        --extra-smiles external/pubchemlite_candidates.csv \\
+        --out data/processed/pool.npz --workers 60
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+from multiprocessing import Pool
 from pathlib import Path
 
+import numpy as np
 import pyarrow.parquet as pq
 
-from casmi.candidates.pool import build_pool, merge_pools
-from casmi.chem import FingerprintCalculator
+from casmi.candidates.pool import CandidatePool, merge_pools, pool_from_records
+from casmi.chem import FingerprintCalculator, inchikey14
+
+#: Per-worker calculator (RDKit generators are not picklable, so each process
+#: builds its own once).
+_CALC: FingerprintCalculator | None = None
+
+
+def _init_worker() -> None:
+    global _CALC
+    _CALC = FingerprintCalculator()
+
+
+def _record(smiles: str) -> tuple[str | None, np.ndarray | None, float]:
+    """``(scorer_key, packed_fingerprint, mass)`` for one SMILES; failures -> None/nan."""
+    assert _CALC is not None
+    key = inchikey14(smiles)
+    if key is None:
+        return None, None, float("nan")
+    result = _CALC.fingerprint_and_mass(smiles)
+    if result is None:
+        return None, None, float("nan")
+    fp, mass = result
+    return key, np.packbits(fp), mass
+
+
+def build_pool_parallel(smiles: list[str], workers: int, progress_every: int = 0) -> CandidatePool:
+    """Fingerprint + key every SMILES across ``workers`` processes, then assemble."""
+    if workers <= 1:
+        _init_worker()
+        records = []
+        for i, smi in enumerate(smiles):
+            if progress_every and i and i % progress_every == 0:
+                print(f"  processed {i:,}/{len(smiles):,}", flush=True)
+            records.append(_record(smi))
+    else:
+        with Pool(workers, initializer=_init_worker) as pool:
+            records = pool.map(_record, smiles, chunksize=512)
+    keys = [r[0] for r in records]
+    fps = [r[1] for r in records]
+    masses = [r[2] for r in records]
+    return pool_from_records(keys, smiles, fps, masses, n_bits=FingerprintCalculator().n_bits)
 
 
 def read_smiles_column(path: str, column: str | None = None) -> list[str]:
@@ -55,42 +107,44 @@ def main() -> int:
     )
     parser.add_argument("--out", required=True)
     parser.add_argument("--progress-every", type=int, default=20_000)
+    parser.add_argument(
+        "--workers", type=int, default=8, help="processes for fingerprinting/keying"
+    )
     args = parser.parse_args()
 
     if not args.train and not args.coconut and not args.extra_smiles:
         parser.error("supply at least one of --train, --coconut, --extra-smiles")
 
     calculator = FingerprintCalculator()
-    print(f"[INFO] fingerprint layout: {calculator.n_bits} bits")
+    print(f"[INFO] fingerprint layout: {calculator.n_bits} bits, {args.workers} workers")
     pools = []
 
     # COCONUT first so it wins identity collisions: its SMILES are curated
     # natural-product representations.
     if args.coconut:
         smiles = read_smiles_column(args.coconut, args.smiles_column)
-        print(f"[INFO] COCONUT: {len(smiles):,} SMILES")
-        pools.append(build_pool(smiles, calculator, progress_every=args.progress_every))
-        print(f"[OK] COCONUT pool: {len(pools[-1]):,} unique structures")
+        print(f"[INFO] COCONUT: {len(smiles):,} SMILES", flush=True)
+        pools.append(build_pool_parallel(smiles, args.workers, args.progress_every))
+        print(f"[OK] COCONUT pool: {len(pools[-1]):,} unique structures", flush=True)
 
     for path in args.extra_smiles:
         smiles = read_smiles_column(path, args.smiles_column)
-        print(f"[INFO] {path}: {len(smiles):,} SMILES")
-        pools.append(build_pool(smiles, calculator, progress_every=args.progress_every))
-        print(f"[OK] pool: {len(pools[-1]):,} unique structures")
+        print(f"[INFO] {path}: {len(smiles):,} SMILES", flush=True)
+        pools.append(build_pool_parallel(smiles, args.workers, args.progress_every))
+        print(f"[OK] pool: {len(pools[-1]):,} unique structures", flush=True)
 
     if args.train:
         table = pq.read_table(args.train, columns=["inchikey14", "normalized_smiles"])
         frame = table.to_pandas().dropna().drop_duplicates("inchikey14")
-        print(f"[INFO] train structures: {len(frame):,}")
+        print(f"[INFO] train structures: {len(frame):,}", flush=True)
+        # Keys are recomputed from SMILES (scorer key), not taken from the
+        # stored column; see the module docstring.
         pools.append(
-            build_pool(
-                frame["normalized_smiles"].tolist(),
-                calculator,
-                keys=frame["inchikey14"].tolist(),
-                progress_every=args.progress_every,
+            build_pool_parallel(
+                frame["normalized_smiles"].tolist(), args.workers, args.progress_every
             )
         )
-        print(f"[OK] train pool: {len(pools[-1]):,} unique structures")
+        print(f"[OK] train pool: {len(pools[-1]):,} unique structures", flush=True)
 
     pool = merge_pools(*pools) if len(pools) > 1 else pools[0]
     print(
