@@ -67,6 +67,9 @@ FEATURE_NAMES: tuple[str, ...] = (
     "denovo_score",
     "denovo_score_rank",
     "denovo_hit",
+    "popularity",
+    "popularity_rank",
+    "popularity_z",
     "log_n_candidates",
 )
 N_FEATURES = len(FEATURE_NAMES)
@@ -129,6 +132,7 @@ def assemble_features(
     analog_power = column("analog_power")
     fragmentation_score = column("fragmentation_score")
     denovo_score = column("denovo_score")
+    popularity = column("popularity")
 
     lib_max = float(library_similarity.max()) if n else 0.0
     ana_max = float(analog_power.max()) if n else 0.0
@@ -173,6 +177,9 @@ def assemble_features(
         "denovo_score": denovo_score,
         "denovo_score_rank": _rank_normalise(denovo_score),
         "denovo_hit": (denovo_score > 0.0).astype(np.float64),
+        "popularity": popularity,
+        "popularity_rank": _rank_normalise(popularity),
+        "popularity_z": _zscore(popularity),
         "log_n_candidates": np.full(n, np.log1p(n)),
     }
     matrix = np.column_stack([columns[name] for name in FEATURE_NAMES])
