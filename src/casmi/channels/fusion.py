@@ -64,6 +64,11 @@ DEFAULT_WEIGHTS: dict[str, float] = {
     "fragmentation_score": 0.20,
     "fpnet_score": 0.05,
     "denovo_score": 0.10,
+    # PubChem popularity is log1p(substances)+log1p(PubMed), roughly 0-20, so
+    # 0.02 per unit lets a very well documented structure (~18) earn ~0.36:
+    # enough to break ties among same-formula isomers, not enough to outrank
+    # a real library or analog hit. The reranker learns the real weight.
+    "popularity": 0.02,
 }
 
 
