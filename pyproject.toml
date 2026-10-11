@@ -16,7 +16,10 @@ dependencies = [
     "pyarrow>=15.0",
     "rdkit==2026.3.3",
     "numba>=0.59",
-    "scikit-learn>=1.4",
+    # Pinned to the minor version Kaggle's image ships (1.6.1): the reranker is
+    # a pickled HistGradientBoostingClassifier ensemble, and unpickling across
+    # sklearn minors emits InconsistentVersionWarning / "may give invalid results".
+    "scikit-learn>=1.6,<1.7",
 ]
 
 [project.optional-dependencies]
