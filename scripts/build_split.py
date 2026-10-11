@@ -28,10 +28,20 @@ def main() -> int:
     parser.add_argument("--n-holdout", type=int, default=2000)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
+        "--database-keys",
         "--coconut-keys",
+        dest="database_keys",
         default=None,
-        help="optional newline-delimited inchikey14 file; steers class 3 toward "
-        "structures no database can retrieve",
+        help="structures a database can retrieve: a newline-delimited inchikey14 file or a "
+        "pool .npz from scripts/build_pool.py; steers class 3 toward structures absent from it",
+    )
+    parser.add_argument(
+        "--holdout-lib",
+        action="append",
+        default=[],
+        help="hold out EVERY structure of this ingest_lib as class 2 (all spectra removed, "
+        "structure kept in the pool), in addition to --n-holdout sampled structures. "
+        "Repeatable. e.g. --holdout-lib enveda-np-examples builds the natural-product panel",
     )
     args = parser.parse_args()
 
@@ -42,16 +52,27 @@ def main() -> int:
     print(f"[INFO] {len(keys):,} spectra, {len(set(keys)):,} unique structures")
 
     database_keys = None
-    if args.coconut_keys:
-        database_keys = {
-            line.strip()
-            for line in Path(args.coconut_keys).read_text().splitlines()
-            if line.strip()
-        }
+    if args.database_keys:
+        if args.database_keys.endswith(".npz"):
+            database_keys = {str(k) for k in np.load(args.database_keys, allow_pickle=False)["keys"]}
+        else:
+            database_keys = {
+                line.strip()
+                for line in Path(args.database_keys).read_text().splitlines()
+                if line.strip()
+            }
         print(f"[INFO] {len(database_keys):,} database keys loaded")
 
+    forced = None
+    if args.holdout_lib:
+        wanted = set(args.holdout_lib)
+        forced = {k for k, lib in zip(keys, libs, strict=True) if lib in wanted and k}
+        print(f"[INFO] forcing {len(forced):,} structures from {sorted(wanted)} into class 2")
+
     config = SplitConfig(n_holdout=args.n_holdout, random_seed=args.seed)
-    split = make_split(keys, libs, config, database_keys=database_keys)
+    split = make_split(
+        keys, libs, config, database_keys=database_keys, forced_class2_keys=forced
+    )
 
     # Hard gate: refuse to emit a split that leaks.
     verify_no_leakage(split, keys)
