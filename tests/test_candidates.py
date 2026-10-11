@@ -197,3 +197,43 @@ class TestMergePools:
     def test_all_empty_raises(self, small_calc):
         with pytest.raises(ValueError, match="no non-empty"):
             merge_pools(build_pool([], calculator=small_calc))
+
+
+class TestPoolFromRecords:
+    def test_builds_sorted_deduplicated_pool(self, small_calc):
+        from casmi.candidates.pool import pool_from_records
+
+        smiles = ["CCO", "OCC", "CCC", "bad"]
+        records = [small_calc.fingerprint_and_mass(s) for s in smiles]
+        keys = [inchikey14(s) for s in smiles]
+        packed = [np.packbits(r[0]) if r else None for r in records]
+        masses = [r[1] if r else float("nan") for r in records]
+        pool = pool_from_records(keys, smiles, packed, masses, n_bits=small_calc.n_bits)
+        assert len(pool) == 2  # CCO/OCC collapse, 'bad' dropped
+        assert np.all(np.diff(pool.mass) >= 0)
+        assert pool.n_bits == small_calc.n_bits
+        assert pool.fingerprints([0]).shape == (1, small_calc.n_bits)
+
+    def test_first_occurrence_wins(self, small_calc):
+        from casmi.candidates.pool import pool_from_records
+
+        smiles = ["OCC", "CCO"]
+        records = [small_calc.fingerprint_and_mass(s) for s in smiles]
+        pool = pool_from_records(
+            [inchikey14(s) for s in smiles], smiles,
+            [np.packbits(r[0]) for r in records], [r[1] for r in records],
+            n_bits=small_calc.n_bits,
+        )
+        assert pool.smiles[0] == "OCC"
+
+    def test_empty_records(self, small_calc):
+        from casmi.candidates.pool import pool_from_records
+
+        pool = pool_from_records([], [], [], [], n_bits=small_calc.n_bits)
+        assert len(pool) == 0
+
+    def test_length_mismatch_raises(self, small_calc):
+        from casmi.candidates.pool import pool_from_records
+
+        with pytest.raises(ValueError, match="same length"):
+            pool_from_records(["A"], [], [], [], n_bits=small_calc.n_bits)
