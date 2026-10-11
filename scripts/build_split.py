@@ -54,7 +54,8 @@ def main() -> int:
     database_keys = None
     if args.database_keys:
         if args.database_keys.endswith(".npz"):
-            database_keys = {str(k) for k in np.load(args.database_keys, allow_pickle=False)["keys"]}
+            pool_keys = np.load(args.database_keys, allow_pickle=False)["keys"]
+            database_keys = {str(k) for k in pool_keys}
         else:
             database_keys = {
                 line.strip()
