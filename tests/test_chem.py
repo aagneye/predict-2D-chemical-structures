@@ -26,6 +26,18 @@ class TestInchikey14:
     def test_double_bond_stereo_collapses(self):
         assert inchikey14(r"C/C=C/C") == inchikey14(r"C/C=C\C")
 
+    def test_stereocentre_pinning_a_tautomer_still_collapses(self):
+        """Regression pair from the official metric notebook.
+
+        The stereocentre pins the enone double bond, so canonicalising the
+        tautomer *before* stripping stereo yields two different keys
+        (UMCVTKGFWFSNGJ vs PUSIBJUZNMNGHT). The metric strips stereo first;
+        so must we, or our dedup/truth matching disagrees with the scorer.
+        """
+        plain = "C=C(C)C1CCC2CCC(=O)C=C2C1"
+        stereo = "C=C(C)[C@@H]1CCC2CCC(=O)C=C2C1"
+        assert inchikey14(plain) == inchikey14(stereo)
+
     def test_tautomers_collapse(self):
         """Keto-enol pair must share a key after canonicalisation."""
         assert inchikey14("CC(=O)C") == inchikey14("CC(O)=C")
