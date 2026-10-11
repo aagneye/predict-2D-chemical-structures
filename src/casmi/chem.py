@@ -75,6 +75,13 @@ def inchikey14(smiles: str) -> str | None:
     if mol is None:
         return None
     try:
+        # Strip stereochemistry BEFORE tautomer canonicalisation, exactly as the
+        # official metric notebook does. Truncating to InChIKey14 afterwards is
+        # not enough on its own: the tautomer enumerator will not move a double
+        # bond whose position a neighbouring stereocentre pins, so the same
+        # skeleton drawn with and without that stereocentre can canonicalise to
+        # two different tautomers and therefore two different InChIKey14s.
+        Chem.RemoveStereochemistry(mol)
         key = Chem.MolToInchiKey(canonical_tautomer(mol))
     except Exception:
         return None
