@@ -62,7 +62,13 @@ DEFAULT_WEIGHTS: dict[str, float] = {
     "analog_mean": 0.10,
     "mass_error_penalty": 0.05,
     "fragmentation_score": 0.20,
-    "fpnet_score": 0.05,
+    # The raw FPNet dot product is ~1,000-2,000 for every candidate, so any
+    # fixed weight on it either drowns every other channel or does nothing.
+    # fuse() therefore z-scores the bit-count-normalised score within the
+    # molecule's candidate set (``fpnet_z``, computed on the fly) and the
+    # weight below applies to that: one standard deviation above the
+    # window's mean is worth about half an analog hit.
+    "fpnet_z": 0.25,
     "denovo_score": 0.10,
     # PubChem popularity is log1p(substances)+log1p(PubMed), roughly 0-20, so
     # 0.02 per unit lets a very well documented structure (~18) earn ~0.36:
@@ -86,9 +92,16 @@ def fuse(
     w = weights or DEFAULT_WEIGHTS
     limit = CFG.top_n if top_n is None else top_n
 
+    fpnet_z = _fpnet_zscores(candidates) if "fpnet_z" in w else None
     best_by_key: dict[str, ScoredCandidate] = {}
-    for candidate in candidates:
-        score = sum(weight * candidate.features.get(name, 0.0) for name, weight in w.items())
+    for position, candidate in enumerate(candidates):
+        score = sum(
+            weight * candidate.features.get(name, 0.0)
+            for name, weight in w.items()
+            if name != "fpnet_z"
+        )
+        if fpnet_z is not None:
+            score += w["fpnet_z"] * float(fpnet_z[position])
         scored = ScoredCandidate(
             inchikey14=candidate.inchikey14,
             smiles=candidate.smiles,
@@ -101,6 +114,28 @@ def fuse(
 
     ranked = sorted(best_by_key.values(), key=lambda c: -c.score)
     return ranked[:limit]
+
+
+def _fpnet_zscores(candidates: list[ScoredCandidate]) -> np.ndarray:
+    """Within-set z-score of ``fpnet_normalised_score``; zeros when FPNet did not run.
+
+    Candidates that carry no FPNet score at all (e.g. an out-of-pool library
+    hit) are given the set mean, i.e. a z of 0, rather than being treated as
+    the worst fingerprint match in the set.
+    """
+    values = np.array(
+        [c.features.get("fpnet_normalised_score", np.nan) for c in candidates], dtype=np.float64
+    )
+    scored = np.isfinite(values) & (values != 0.0)
+    if scored.sum() < 2:
+        return np.zeros(len(candidates), dtype=np.float64)
+    mean = values[scored].mean()
+    std = values[scored].std()
+    if std < 1e-9:
+        return np.zeros(len(candidates), dtype=np.float64)
+    z = np.zeros(len(candidates), dtype=np.float64)
+    z[scored] = (values[scored] - mean) / std
+    return z
 
 
 #: Library similarity at or above this is treated as near-certain identity
