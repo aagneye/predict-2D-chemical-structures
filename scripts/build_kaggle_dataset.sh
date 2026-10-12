@@ -47,7 +47,11 @@ else
 fi
 
 echo "=== fpnet checkpoint (Channel 4) ==="
-if [ -f "$CHECKPOINTS/fpnet_final.pt" ]; then
+# Prefer the retrain on the v2 split (excludes the natural-product panel), which
+# is the only FPNet whose validation numbers we can trust.
+if [ -f "$CHECKPOINTS/fpnet_v2/fpnet_final.pt" ]; then
+    cp "$CHECKPOINTS/fpnet_v2/fpnet_final.pt" "$STAGE/fpnet_final.pt"
+elif [ -f "$CHECKPOINTS/fpnet_final.pt" ]; then
     cp "$CHECKPOINTS/fpnet_final.pt" "$STAGE/fpnet_final.pt"
 else
     echo "WARNING: no FPNet checkpoint found at $CHECKPOINTS/fpnet_final.pt — Channel 4 will be skipped"
