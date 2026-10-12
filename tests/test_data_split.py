@@ -286,3 +286,67 @@ class TestForcedClass2:
             keys, libs, SplitConfig(n_holdout=2, random_seed=0), forced_class2_keys={"ZZZ"}
         )
         assert "ZZZ" not in split.novelty_class
+
+
+class TestSplitV3:
+    def _table(self):
+        keys = np.array(
+            ["A", "A", "A", "B", "B", "C", "C", "D", "E", "E", "F", "G", "H", "I", "J", "K"],
+            dtype=object,
+        )
+        libs = np.array(
+            ["enveda-np-examples", "gnps", "riken", "enveda-np-examples", "gnps"]
+            + ["gnps"] * 11,
+            dtype=object,
+        )
+        return keys, libs
+
+    def test_query_libs_keep_only_test_like_spectra_and_drop_the_rest(self):
+        keys, libs = self._table()
+        split = make_split(
+            keys, libs, SplitConfig(n_holdout=2, random_seed=0),
+            forced_class2_keys={"A", "B"}, query_libs={"enveda-np-examples"},
+        )
+        a_rows = np.flatnonzero(keys == "A")
+        assert split.val_mask[a_rows].tolist() == [True, False, False]
+        assert split.dropped_mask[a_rows].tolist() == [False, True, True]
+        assert not split.train_mask[a_rows].any()
+        verify_no_leakage(split, keys)
+
+    def test_row_groups_merge_two_stored_keys_into_one_identity(self):
+        keys, libs = self._table()
+        groups = keys.copy()
+        groups[keys == "C"] = "D"  # C and D are the same scored skeleton
+        split = make_split(
+            keys, libs, SplitConfig(n_holdout=1, random_seed=0),
+            forced_class2_keys={"D"}, row_groups=groups,
+        )
+        assert split.row_key is not None
+        assert "D" in split.novelty_class and "C" not in split.novelty_class
+        # Every row of both stored keys left the library.
+        merged_rows = np.flatnonzero((keys == "C") | (keys == "D"))
+        assert not split.train_mask[merged_rows].any()
+        assert split.val_mask[merged_rows].all()
+        verify_no_leakage(split, keys)
+
+    def test_fixed_holdout_reuses_keys_and_classes(self):
+        keys, libs = self._table()
+        first = make_split(keys, libs, SplitConfig(n_holdout=4, random_seed=3))
+        fixed = dict(first.novelty_class)
+        second = make_split(keys, libs, SplitConfig(n_holdout=0), fixed_holdout=fixed)
+        assert set(second.holdout_keys) == set(first.holdout_keys)
+        for key, cls in fixed.items():
+            assert second.novelty_class[key] == cls or (cls == 1 and second.novelty_class[key] == 2)
+        verify_no_leakage(second, keys)
+
+    def test_dropped_rows_are_required_to_belong_to_forced_keys(self):
+        keys, libs = self._table()
+        split = make_split(keys, libs, SplitConfig(n_holdout=2, random_seed=0))
+        split.dropped_mask = np.zeros(len(keys), dtype=bool)
+        split.dropped_mask[0] = True
+        split.train_mask[0] = False
+        split.val_mask[0] = False
+        verify_no_leakage(split, keys)  # a dropped row is allowed by the mask check
+        split.dropped_mask[0] = False
+        with pytest.raises(AssertionError, match="neither side"):
+            verify_no_leakage(split, keys)
