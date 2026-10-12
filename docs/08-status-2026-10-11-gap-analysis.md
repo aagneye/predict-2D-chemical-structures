@@ -187,3 +187,33 @@ Next: rebuild `rank_train.npz` with `--popularity --fragmentation` and
 `fpnet_v2`, retrain the ranker, measure, `build_kaggle_dataset.sh`, push the
 kernel, submit. Then the PubChem 106M channel and ICEBERG/GLACIER isomer
 re-scoring (phase B).
+
+## 9. Day 2 (2026-10-12): first LB gain, and the plan to the top 10
+
+**Public LB: 0.148 → 0.186** (kernel v7: pool v2 + popularity prior + FPNet v2
++ parsimony fragmentation, weighted fusion, no reranker).
+
+Honest held-out on split_v2 (2,250 molecules, channels 1+2 only): 0.308 →
+0.322 with the popularity feature → 0.334 with the mu=0.15 blend. Class-2
+recall@25 was only 0.54-0.58: with a 1.1M pool the mass window holds
+hundreds of same-formula isomers and the old mass-only pruning (cap 80)
+discarded the answer before it was scored.
+
+### What top-10 needs, in order, and what is now built for it
+
+| # | Lever | Why it matters | Status |
+|---|---|---|---|
+| 1 | Prune the window by evidence (FPNet z-score + popularity), cap 150 | class-2 recall ceiling | built |
+| 2 | Full PubChem tier channel (106M structures, FPNet + popularity inside the window, `pubchem_only` flag) | class-2 answers absent from COCONUT/PubChemLite; the lineage's biggest post-pool gain | built, smoke-tested on real data |
+| 3 | Reranker on the new 29 features, validated by grouped 5-fold CV (`scripts/cv_ranker.py`) | turns candidates into rank 1; the old 0.592 was in-sample | phase B running |
+| 4 | Fusion uses within-set z-scored FPNet, not the raw dot product | the raw score (~1,500) drowned every other channel | built |
+| 5 | Honest split v3: identity = scorer key (71k rows had a different stored key), panel queries only from `enveda-np-examples` spectra, hold-out reused from v2 so FPNet v2 stays clean | numbers that predict the LB | built |
+| 6 | Popularity for PubChemLite pool rows (`extend_popularity.py`) | prior covered 66% of the pool | phase B |
+| 7 | ICEBERG/GLACIER forward-spectrum re-scoring of same-formula groups | isomer separation, +0.02 in the lineage | next |
+| 8 | Second engine + reciprocal-rank fusion; de novo for class 3 | last | later |
+
+Phase B (`scripts/run_phase_b.sh`, log `/mnt/casmi/logs/phase_b.log`, GPU 3):
+popularity_v2 → rank_train_v2 (all channels incl. PubChem) → CV ranker →
+full + panel evaluations on split_v3 → `build_kaggle_dataset.sh`. The next
+submission is then `kaggle datasets version` + `kaggle kernels push` +
+submit, with the kernel attaching the public PubChem tier datasets.
