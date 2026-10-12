@@ -11,7 +11,7 @@
 #   5. build_kaggle_dataset.sh — stage everything for the next submission
 #
 # Waits for phase A to finish (same pgrep guard), then runs on GPU 3.
-# Usage: run_phase_b.sh
+# Usage: SPLIT=/path/split.npz run_phase_b.sh   (default: ~/casmi_checkpoints/split_v2.npz)
 set -euo pipefail
 
 WORK=/mnt/casmi
@@ -22,6 +22,8 @@ PROCESSED="$WORK/data/processed"
 RUNS="$WORK/runs"
 KEEP="$HOME/casmi_checkpoints"
 FPNET="$KEEP/fpnet_v2/fpnet_final.pt"
+SPLIT="${SPLIT:-$KEEP/split_v2.npz}"
+PANEL="${SPLIT%.npz}.panel_keys.txt"
 LOG="$WORK/logs/phase_b.log"
 export CUDA_VISIBLE_DEVICES=3
 
@@ -45,7 +47,7 @@ stage() { echo "=== $(date -u '+%Y-%m-%dT%H:%M:%SZ') STAGE: $1 ==="; }
     cp "$PROCESSED/popularity_v2.npz" "$KEEP/popularity_v2.npz"
 
     PUBCHEM="--pubchem-tier $EXT/pubchem_tier --pubchem-popularity $EXT/pubchem_pop"
-    COMMON="--train $DATA --split $KEEP/split_v2.npz --pool $KEEP/pool_v2.npz
+    COMMON="--train $DATA --split $SPLIT --pool $KEEP/pool_v2.npz
             --fragmentation --fpnet-checkpoint $FPNET --fpnet-device cuda
             --popularity $PROCESSED/popularity_v2.npz $PUBCHEM"
 
@@ -56,7 +58,7 @@ stage() { echo "=== $(date -u '+%Y-%m-%dT%H:%M:%SZ') STAGE: $1 ==="; }
 
     stage "3. grouped 5-fold CV + final ranker"
     .venv/bin/python scripts/cv_ranker.py \
-        --data "$PROCESSED/rank_train_v2.npz" --split "$KEEP/split_v2.npz" \
+        --data "$PROCESSED/rank_train_v2.npz" --split "$SPLIT" \
         --out "$KEEP/ranker.pkl" --report "$RUNS/b_cv_ranker/summary.json"
 
     stage "4a. full hold-out: all channels + reranker"
@@ -72,7 +74,7 @@ stage() { echo "=== $(date -u '+%Y-%m-%dT%H:%M:%SZ') STAGE: $1 ==="; }
     stage "4c. NP panel: all channels + reranker"
     # shellcheck disable=SC2086
     .venv/bin/python scripts/run_baseline.py $COMMON --ranker "$KEEP/ranker.pkl" \
-        --cohort-keys "$KEEP/split_v2.panel_keys.txt" --out "$RUNS/b1_panel_reranked"
+        --cohort-keys "$PANEL" --out "$RUNS/b1_panel_reranked"
 
     stage "5. stage the Kaggle dataset"
     cp "$PROCESSED/popularity_v2.npz" "$KEEP/popularity.npz"
