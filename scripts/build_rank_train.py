@@ -108,7 +108,11 @@ def main() -> int:
     table = pq.read_table(args.train, columns=[c for c in columns if c in available])
     table = table.filter(pa.array(val_mask))
     frame = table.to_pandas()
-    frame["molecule_id"] = frame["inchikey14"]
+    if "row_key" in split_data.files:
+        # The split was built on scorer keys: group queries by the same identity.
+        frame["molecule_id"] = np.asarray(split_data["row_key"], dtype=str)[val_mask]
+    else:
+        frame["molecule_id"] = frame["inchikey14"]
 
     truth = (
         frame.drop_duplicates("molecule_id")
