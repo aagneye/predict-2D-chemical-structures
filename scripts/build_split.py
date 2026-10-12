@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import argparse
 import json
+from multiprocessing import Pool
 from pathlib import Path
 
 import numpy as np
 import pyarrow.parquet as pq
 
+from casmi.chem import inchikey14
 from casmi.config import SplitConfig
 from casmi.data.split import make_split, verify_no_leakage
 
@@ -36,6 +38,26 @@ def main() -> int:
         "pool .npz from scripts/build_pool.py; steers class 3 toward structures absent from it",
     )
     parser.add_argument(
+        "--scorer-keys",
+        action="store_true",
+        help="split by the scorer key (stereo-stripped tautomer-canonical InChIKey14 of each "
+        "structure's SMILES) instead of the stored inchikey14 column",
+    )
+    parser.add_argument(
+        "--query-libs",
+        action="append",
+        default=[],
+        help="for --holdout-lib structures, only spectra from these libraries are queries; "
+        "their other spectra are dropped. Defaults to the --holdout-lib libraries",
+    )
+    parser.add_argument(
+        "--reuse-holdout",
+        default=None,
+        help="an earlier split .npz whose hold-out structures (and classes) are kept, so a "
+        "model trained against it stays leak-free; only the masks are recomputed",
+    )
+    parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument(
         "--holdout-lib",
         action="append",
         default=[],
@@ -46,10 +68,27 @@ def main() -> int:
     args = parser.parse_args()
 
     print(f"[INFO] reading structure columns from {args.train}")
-    table = pq.read_table(args.train, columns=["inchikey14", "ingest_lib"])
+    columns = ["inchikey14", "ingest_lib"] + (["normalized_smiles"] if args.scorer_keys else [])
+    table = pq.read_table(args.train, columns=columns)
     keys = np.asarray(table.column("inchikey14").to_pylist(), dtype=object)
     libs = np.asarray(table.column("ingest_lib").to_pylist(), dtype=object)
     print(f"[INFO] {len(keys):,} spectra, {len(set(keys)):,} unique structures")
+
+    row_groups = None
+    if args.scorer_keys:
+        smiles = np.asarray(table.column("normalized_smiles").to_pylist(), dtype=object)
+        unique = sorted({s for s in smiles if s})
+        print(f"[INFO] computing scorer keys for {len(unique):,} SMILES "
+              f"with {args.workers} workers", flush=True)
+        with Pool(args.workers) as pool:
+            scorer = pool.map(inchikey14, unique, chunksize=256)
+        lookup = dict(zip(unique, scorer, strict=True))
+        row_groups = np.asarray([lookup.get(s) or k for s, k in zip(smiles, keys, strict=True)],
+                                dtype=object)
+        changed = int(np.sum(row_groups != keys))
+        print(f"[INFO] scorer key differs from the stored key on {changed:,} rows; "
+              f"{len(set(row_groups)):,} scored identities")
+        keys = row_groups
 
     database_keys = None
     if args.database_keys:
@@ -65,15 +104,34 @@ def main() -> int:
         print(f"[INFO] {len(database_keys):,} database keys loaded")
 
     forced = None
+    query_libs = None
     if args.holdout_lib:
         wanted = set(args.holdout_lib)
         forced = {k for k, lib in zip(keys, libs, strict=True) if lib in wanted and k}
-        print(f"[INFO] forcing {len(forced):,} structures from {sorted(wanted)} into class 2")
+        query_libs = set(args.query_libs) if args.query_libs else wanted
+        print(f"[INFO] forcing {len(forced):,} structures from {sorted(wanted)} into class 2; "
+              f"queries from {sorted(query_libs)} only")
+
+    fixed = None
+    if args.reuse_holdout:
+        prev = np.load(args.reuse_holdout, allow_pickle=False)
+        fixed = dict(zip([str(k) for k in prev["holdout_keys"]],
+                         [int(c) for c in prev["novelty_class"]], strict=True))
+        if row_groups is not None:
+            # Translate the earlier split's stored keys into scorer keys.
+            stored_to_scorer = dict(zip(
+                np.asarray(table.column("inchikey14").to_pylist(), dtype=object),
+                row_groups, strict=True))
+            fixed = {stored_to_scorer.get(k, k): c for k, c in fixed.items()}
+        print(f"[INFO] reusing {len(fixed):,} hold-out structures from {args.reuse_holdout}")
 
     config = SplitConfig(n_holdout=args.n_holdout, random_seed=args.seed)
     split = make_split(
-        keys, libs, config, database_keys=database_keys, forced_class2_keys=forced
+        keys, libs, config, database_keys=database_keys, forced_class2_keys=forced,
+        query_libs=query_libs, row_groups=None, fixed_holdout=fixed,
     )
+    if row_groups is not None:
+        split.row_key = keys
 
     # Hard gate: refuse to emit a split that leaks.
     verify_no_leakage(split, keys)
@@ -86,6 +144,9 @@ def main() -> int:
     # Report the library composition of the hold-out, since an NP-weighted
     # sample is the whole point and a silent weighting regression would be
     # invisible in the aggregate MRR later.
+    if split.dropped_mask is not None and split.dropped_mask.any():
+        n_dropped = int(split.dropped_mask.sum())
+        print(f"[INFO] dropped {n_dropped:,} non-query spectra of panel structures")
     held = set(split.holdout_keys)
     composition: dict[str, int] = {}
     seen: set[str] = set()
@@ -108,6 +169,7 @@ def main() -> int:
             [split.novelty_class[k] for k in split.holdout_keys], dtype=np.int8
         ),
         excluded_from_pool=np.asarray(sorted(split.excluded_from_pool), dtype=str),
+        **({"row_key": np.asarray(split.row_key, dtype=str)} if split.row_key is not None else {}),
     )
     print(f"[OK] wrote {out_path}")
     if forced:
