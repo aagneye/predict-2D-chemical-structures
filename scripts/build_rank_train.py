@@ -63,6 +63,17 @@ def main() -> int:
         default=None,
         help="PubChem popularity prior (.npz or pool_popularity.csv); adds the popularity feature",
     )
+    parser.add_argument(
+        "--pubchem-tier",
+        default=None,
+        help="directory with pc_mass.npy/pc_off.npy/pc_smiles.npy (Channel 7, needs FPNet)",
+    )
+    parser.add_argument(
+        "--pubchem-popularity",
+        default=None,
+        help="directory with pc_lsid.npy/pc_lpmid.npy aligned with the tier",
+    )
+    parser.add_argument("--pubchem-top-k", type=int, default=25)
     args = parser.parse_args()
 
     split_data = np.load(args.split, allow_pickle=False)
@@ -147,6 +158,18 @@ def main() -> int:
         popularity = PopularityPrior.load(args.popularity)
         print(f"[OK] loaded popularity prior: {len(popularity):,} structures")
 
+    pubchem_tier = None
+    pubchem_config = None
+    if args.pubchem_tier:
+        from casmi.channels.pubchem import PubChemConfig, PubChemTier
+
+        pubchem_tier = PubChemTier(args.pubchem_tier, args.pubchem_popularity)
+        pubchem_config = PubChemConfig(top_k=args.pubchem_top_k)
+        print(
+            f"[OK] PubChem tier: {len(pubchem_tier):,} structures, "
+            f"popularity={'yes' if pubchem_tier.has_popularity else 'no'}"
+        )
+
     analog_index = AnalogIndex(library)
     examples: list[RankTrainingExample] = []
     n_with_positive = 0
@@ -172,6 +195,8 @@ def main() -> int:
             denovo_config=denovo_config,
             denovo_device=args.denovo_device,
             popularity=popularity,
+            pubchem_tier=pubchem_tier,
+            pubchem_config=pubchem_config,
         )
         if not candidates:
             continue
