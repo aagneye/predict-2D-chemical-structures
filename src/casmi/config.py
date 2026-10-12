@@ -37,8 +37,11 @@ class CandidateConfig:
     ppm_window: float = 8.5
     #: Wider fallback window used only when the tight window is empty. (ref: 30.0)
     ppm_fallback: float = 30.0
-    #: Cap on candidates scored per molecule after coarse pruning. (ref: 80)
-    max_candidates: int = 80
+    #: Cap on candidates scored per molecule after coarse pruning. The
+    #: reference used 80 with a 711k pool and mass-only pruning; with a 1.1M
+    #: pool and evidence-based pruning (FPNet + popularity) 150 keeps class-2
+    #: recall without blowing up the fragmentation cost.
+    max_candidates: int = 150
 
 
 @dataclass(frozen=True)
