@@ -30,7 +30,12 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from casmi.candidates.pool import CandidatePool
-from casmi.channels.analog import AnalogIndex, find_analogs, propagate_to_candidates
+from casmi.channels.analog import (
+    AnalogIndex,
+    find_analogs,
+    propagate_fingerprints,
+    propagate_to_candidates,
+)
 from casmi.channels.denovo import DenovoChannelConfig, denovo_score_feature, generate_candidates
 from casmi.channels.fragmentation import FragmentationConfig, fragmentation_scores
 from casmi.channels.fusion import (
@@ -41,6 +46,8 @@ from casmi.channels.fusion import (
     mass_error_penalty,
 )
 from casmi.channels.library import library_search
+from casmi.channels.pubchem import PubChemConfig, PubChemTier, pubchem_candidates
+from casmi.chem import FingerprintCalculator
 from casmi.config import CFG, Config
 from casmi.data.loaders import QueryMolecule, SpectralLibrary
 from casmi.priors import PopularityPrior, popularity_blend
@@ -81,6 +88,8 @@ class MoleculeDiagnostics:
     #: that were not already reachable via retrieval (0 if the channel was
     #: not run, or nothing generated survived mass filtering/deduplication).
     n_denovo_candidates: int = 0
+    #: Number of PubChem-only (Channel 7) proposals added for this molecule.
+    n_pubchem_candidates: int = 0
 
 
 @dataclass
@@ -127,6 +136,8 @@ def build_scored_candidates(
     denovo_config: DenovoChannelConfig | None = None,
     denovo_device: str = "cpu",
     popularity: PopularityPrior | None = None,
+    pubchem_tier: PubChemTier | None = None,
+    pubchem_config: PubChemConfig | None = None,
 ) -> tuple[list[ScoredCandidate], dict[str, Any]]:
     """Assemble every channel's per-candidate features for one molecule.
 
@@ -153,6 +164,11 @@ def build_scored_candidates(
             supplied, every candidate (pool, out-of-pool library hit, de novo)
             gets a ``popularity`` feature: how documented the structure is in
             PubChem. Unknown structures get 0.0.
+        pubchem_tier: Optional :class:`casmi.channels.pubchem.PubChemTier`
+            (Channel 7). Requires ``fpnet_model``; proposes PubChem structures
+            absent from the pool window, scored like pool candidates and flagged
+            ``pubchem_only = 1``.
+        pubchem_config: Window / shortlist settings for Channel 7.
 
     Returns:
         ``(candidates, context)`` where ``context`` carries the raw
@@ -177,16 +193,53 @@ def build_scored_candidates(
     if candidate_indices.size == 0:
         candidate_indices = pool.window(target, cfg.candidates.ppm_fallback)
 
-    # Prune to a scoreable number before the expensive fingerprint work, using
-    # cheap signals only: library similarity dominates, mass proximity breaks ties.
+    # Channel 4's forward pass happens once per molecule and is cheap, so it
+    # runs before pruning: the window of a 1.1M-structure pool holds hundreds
+    # of same-formula isomers, and pruning them by mass proximity alone threw
+    # the true structure away for ~40% of class-2 molecules.
+    fpnet_logits = None
+    if fpnet_model is not None and candidate_indices.size:
+        from casmi.models.train import predict_logits
+
+        fpnet_logits = predict_logits(
+            fpnet_model,
+            spectra=molecule.spectra,
+            precursor_mz=molecule.precursor_mz,
+            adducts=molecule.adducts,
+            instruments=molecule.instrument_types,
+            collision_energies=molecule.collision_energies,
+            ionization_modes=molecule.ionization_modes,
+            model_config=fpnet_config,
+            device=fpnet_device,
+        )
+
+    # Prune to a scoreable number before the expensive per-candidate work.
+    # Library similarity dominates when present; otherwise the fingerprint
+    # model's within-window z-score plus the popularity prior rank the
+    # isomers, and mass proximity only breaks ties.
     if candidate_indices.size > cfg.candidates.max_candidates:
         coarse = np.array(
             [library_hits[pool.keys[i]].similarity if pool.keys[i] in library_hits else 0.0
              for i in candidate_indices],
             dtype=np.float64,
-        )
-        coarse = coarse * 100.0 - np.abs(pool.mass[candidate_indices] - target)
-        keep = np.argsort(-coarse)[: cfg.candidates.max_candidates]
+        ) * 100.0
+        if fpnet_logits is not None:
+            from casmi.models.fpnet import normalised_score
+
+            window_norm = normalised_score(
+                pool.fingerprints(candidate_indices), fpnet_logits
+            ).astype(np.float64)
+            std = float(window_norm.std())
+            if std > 1e-9:
+                coarse += (window_norm - window_norm.mean()) / std
+        if popularity is not None:
+            coarse += 0.15 * np.array(
+                [popularity.get(pool.keys[i]) for i in candidate_indices], dtype=np.float64
+            )
+        coarse += mass_error_penalty(
+            pool.mass[candidate_indices], target, cfg.candidates.ppm_window
+        ).astype(np.float64)
+        keep = np.argsort(-coarse, kind="stable")[: cfg.candidates.max_candidates]
         candidate_indices = candidate_indices[np.sort(keep)]
 
     analog_features = propagate_to_candidates(
@@ -213,22 +266,9 @@ def build_scored_candidates(
     # candidate fingerprints.
     fpnet_feature = np.zeros(candidate_indices.size, dtype=np.float32)
     fpnet_norm_feature = np.zeros(candidate_indices.size, dtype=np.float32)
-    fpnet_logits = None
-    if fpnet_model is not None and candidate_indices.size:
+    if fpnet_logits is not None and candidate_indices.size:
         from casmi.models.fpnet import normalised_score, score_candidates
-        from casmi.models.train import predict_logits
 
-        fpnet_logits = predict_logits(
-            fpnet_model,
-            spectra=molecule.spectra,
-            precursor_mz=molecule.precursor_mz,
-            adducts=molecule.adducts,
-            instruments=molecule.instrument_types,
-            collision_energies=molecule.collision_energies,
-            ionization_modes=molecule.ionization_modes,
-            model_config=fpnet_config,
-            device=fpnet_device,
-        )
         candidate_fp = pool.fingerprints(candidate_indices)
         fpnet_feature = score_candidates(candidate_fp, fpnet_logits).astype(np.float32)
         fpnet_norm_feature = normalised_score(candidate_fp, fpnet_logits).astype(np.float32)
@@ -284,6 +324,62 @@ def build_scored_candidates(
                 )
             )
 
+    # Channel 7: PubChem-only proposals. Structures in the full PubChem tier's
+    # mass window that the pool lacks, ranked by FPNet + popularity inside the
+    # window, then given the same analog / fragmentation / mass features as
+    # pool candidates so the reranker compares like with like.
+    pubchem_proposals: list = []
+    if pubchem_tier is not None and fpnet_logits is not None:
+        existing = {c.inchikey14 for c in candidates}
+        pubchem_proposals = pubchem_candidates(
+            pubchem_tier,
+            target,
+            fpnet_logits,
+            _fingerprint_calculator(pool.n_bits),
+            exclude_keys=existing,
+            config=pubchem_config,
+        )
+        if pubchem_proposals:
+            pc_fp = np.stack([p.fingerprint for p in pubchem_proposals])
+            pc_analog = propagate_fingerprints(pc_fp, pool, analogs, analog_config=cfg.analog)
+            pc_mass = np.array([p.mass for p in pubchem_proposals], dtype=np.float64)
+            pc_mass_feature = mass_error_penalty(pc_mass, target, cfg.candidates.ppm_window)
+            pc_frag = np.zeros(len(pubchem_proposals), dtype=np.float32)
+            if fragmentation_channel:
+                pc_frag = fragmentation_scores(
+                    [p.smiles for p in pubchem_proposals],
+                    molecule.spectra,
+                    positive_mode=molecule.is_positive,
+                    config=FragmentationConfig(),
+                )
+            for j, proposal in enumerate(pubchem_proposals):
+                candidates.append(
+                    ScoredCandidate(
+                        inchikey14=proposal.inchikey14,
+                        smiles=proposal.smiles,
+                        score=0.0,
+                        features={
+                            "library_similarity": 0.0,
+                            "analog_power": float(pc_analog["analog_power"][j]),
+                            "analog_linear": float(pc_analog["analog_linear"][j]),
+                            "analog_best_tanimoto": float(pc_analog["analog_best_tanimoto"][j]),
+                            "analog_top_tanimoto": float(pc_analog["analog_top_tanimoto"][j]),
+                            "analog_mean": float(pc_analog["analog_mean"][j]),
+                            "mass_error_penalty": float(pc_mass_feature[j]),
+                            "mass_error_ppm": (
+                                abs(proposal.mass - target) / target * 1e6
+                                if np.isfinite(target) and target > 0
+                                else float("nan")
+                            ),
+                            "fragmentation_score": float(pc_frag[j]),
+                            "fpnet_score": proposal.fpnet_score,
+                            "fpnet_normalised_score": proposal.fpnet_normalised_score,
+                            "popularity": proposal.popularity,
+                            "pubchem_only": 1.0,
+                        },
+                    )
+                )
+
     # Channel 6: de novo generation. The only channel able to reach a
     # structure absent from both the reference library and the candidate
     # pool (Class 3, see docs/06-implementation-plan.md). Requires FPNet's
@@ -325,8 +421,26 @@ def build_scored_candidates(
         "fragmentation_scores": fragmentation_feature,
         "fpnet_scores": fpnet_feature,
         "denovo_candidates": denovo_candidates,
+        "pubchem_candidates": pubchem_proposals,
     }
     return candidates, context
+
+
+_CALCULATORS: dict[int, FingerprintCalculator] = {}
+
+
+def _fingerprint_calculator(n_bits: int) -> FingerprintCalculator:
+    """Process-wide calculator for the pool's layout (RDKit generators are costly to build)."""
+    calc = _CALCULATORS.get(n_bits)
+    if calc is None:
+        calc = FingerprintCalculator()
+        if calc.n_bits != n_bits:
+            raise ValueError(
+                f"pool fingerprint width {n_bits} != calculator layout {calc.n_bits}; "
+                "the PubChem channel needs the full default layout"
+            )
+        _CALCULATORS[n_bits] = calc
+    return calc
 
 
 def predict_molecule(
@@ -347,6 +461,8 @@ def predict_molecule(
     denovo_device: str = "cpu",
     popularity: PopularityPrior | None = None,
     popularity_mu: float = 0.0,
+    pubchem_tier: PubChemTier | None = None,
+    pubchem_config: PubChemConfig | None = None,
 ) -> tuple[list[str], MoleculeDiagnostics]:
     """Produce a ranked SMILES list and diagnostics for one molecule.
 
@@ -401,6 +517,8 @@ def predict_molecule(
         denovo_config=denovo_config,
         denovo_device=denovo_device,
         popularity=popularity,
+        pubchem_tier=pubchem_tier,
+        pubchem_config=pubchem_config,
     )
     library_hits = context["library_hits"]
     analogs = context["analogs"]
@@ -467,6 +585,7 @@ def predict_molecule(
         best_fpnet_score=float(fpnet_feature.max()) if fpnet_feature.size else 0.0,
         used_reranker=used_reranker,
         n_denovo_candidates=len(denovo_candidates),
+        n_pubchem_candidates=len(context["pubchem_candidates"]),
     )
     return [c.smiles for c in ranked if c.smiles], diagnostics
 
@@ -489,6 +608,8 @@ def run_pipeline(
     denovo_device: str = "cpu",
     popularity: PopularityPrior | None = None,
     popularity_mu: float = 0.0,
+    pubchem_tier: PubChemTier | None = None,
+    pubchem_config: PubChemConfig | None = None,
 ) -> PipelineResult:
     """Run the baseline over many molecules.
 
@@ -521,6 +642,8 @@ def run_pipeline(
             denovo_device=denovo_device,
             popularity=popularity,
             popularity_mu=popularity_mu,
+            pubchem_tier=pubchem_tier,
+            pubchem_config=pubchem_config,
         )
         result.predictions[molecule.molecule_id] = smiles
         result.diagnostics.append(diagnostics)
