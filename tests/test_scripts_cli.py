@@ -545,3 +545,43 @@ class TestTrainRankerScript:
         )
         assert result.returncode == 0, result.stderr
         assert "gbm_reranker" in result.stdout
+
+
+class TestBuildSplitV3Script:
+    def test_scorer_keys_panel_and_reuse(self, train_parquet, tmp_path):
+        first = tmp_path / "v2.npz"
+        result = run_script(
+            "build_split.py", "--train", train_parquet, "--out", str(first),
+            "--n-holdout", "4", "--holdout-lib", "enveda-np-examples",
+        )
+        assert result.returncode == 0, result.stderr
+        second = tmp_path / "v3.npz"
+        result = run_script(
+            "build_split.py", "--train", train_parquet, "--out", str(second),
+            "--n-holdout", "0", "--holdout-lib", "enveda-np-examples",
+            "--scorer-keys", "--workers", "1", "--reuse-holdout", str(first),
+        )
+        assert result.returncode == 0, result.stderr
+        assert "leakage check passed" in result.stdout
+        a = np.load(first, allow_pickle=False)
+        b = np.load(second, allow_pickle=False)
+        assert "row_key" in b.files and b["row_key"].size == b["train_mask"].size
+        # Same hold-out set (modulo scorer-key merges), masks may now leave rows dropped.
+        assert set(b["holdout_keys"]) <= set(a["holdout_keys"]) | set(b["row_key"])
+        assert len(b["holdout_keys"]) >= len(a["holdout_keys"]) - 2
+        assert not np.any(b["train_mask"] & b["val_mask"])
+
+    def test_run_baseline_groups_by_row_key(self, train_parquet, tmp_path):
+        split = tmp_path / "v3.npz"
+        run_script(
+            "build_split.py", "--train", train_parquet, "--out", str(split),
+            "--n-holdout", "4", "--scorer-keys", "--workers", "1",
+        )
+        pool = tmp_path / "pool.npz"
+        run_script("build_pool.py", "--train", train_parquet, "--out", str(pool), "--workers", "1")
+        result = run_script(
+            "run_baseline.py", "--train", train_parquet, "--split", str(split),
+            "--pool", str(pool), "--out", str(tmp_path / "run"),
+        )
+        assert result.returncode == 0, result.stderr
+        assert "MRR@25" in result.stdout
