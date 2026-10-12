@@ -79,6 +79,17 @@ def main() -> int:
         "adds the popularity feature to every candidate",
     )
     parser.add_argument(
+        "--pubchem-tier",
+        default=None,
+        help="directory with pc_mass.npy/pc_off.npy/pc_smiles.npy (Channel 7, needs FPNet)",
+    )
+    parser.add_argument(
+        "--pubchem-popularity",
+        default=None,
+        help="directory with pc_lsid.npy/pc_lpmid.npy aligned with the tier",
+    )
+    parser.add_argument("--pubchem-top-k", type=int, default=25)
+    parser.add_argument(
         "--popularity-mu",
         type=float,
         default=0.0,
@@ -204,6 +215,18 @@ def main() -> int:
             f"covers {covered / max(len(pool), 1):.1%} of the pool"
         )
 
+    pubchem_tier = None
+    pubchem_config = None
+    if args.pubchem_tier:
+        from casmi.channels.pubchem import PubChemConfig, PubChemTier
+
+        pubchem_tier = PubChemTier(args.pubchem_tier, args.pubchem_popularity)
+        pubchem_config = PubChemConfig(top_k=args.pubchem_top_k)
+        print(
+            f"[OK] PubChem tier: {len(pubchem_tier):,} structures, "
+            f"popularity={'yes' if pubchem_tier.has_popularity else 'no'}"
+        )
+
     result = run_pipeline(
         molecules,
         library,
@@ -221,6 +244,8 @@ def main() -> int:
         denovo_device=args.denovo_device,
         popularity=popularity,
         popularity_mu=args.popularity_mu,
+        pubchem_tier=pubchem_tier,
+        pubchem_config=pubchem_config,
     )
 
     scores = evaluate_predictions(
@@ -239,6 +264,8 @@ def main() -> int:
         active_channels.append("denovo")
     if args.popularity:
         active_channels.append(f"popularity(mu={args.popularity_mu})")
+    if args.pubchem_tier:
+        active_channels.append(f"pubchem(top_k={args.pubchem_top_k})")
     if args.ranker:
         active_channels.append("gbm_reranker")
     print(f"\n=== Active channels: {', '.join(active_channels)} ===")
@@ -273,7 +300,8 @@ def main() -> int:
         handle.write(
             "molecule_id,target_mass,n_spectra,n_candidates,"
             "best_library_sim,best_analog_sim,n_analogs,top_score,top_source,"
-            "best_fragmentation_score,best_fpnet_score,used_reranker,n_denovo_candidates\n"
+            "best_fragmentation_score,best_fpnet_score,used_reranker,n_denovo_candidates,"
+            "n_pubchem_candidates\n"
         )
         for d in result.diagnostics:
             handle.write(
@@ -281,7 +309,7 @@ def main() -> int:
                 f"{d.best_library_similarity:.4f},{d.best_analog_similarity:.4f},"
                 f"{d.n_analogs},{d.top_score:.4f},{d.top_source},"
                 f"{d.best_fragmentation_score:.4f},{d.best_fpnet_score:.4f},{d.used_reranker},"
-                f"{d.n_denovo_candidates}\n"
+                f"{d.n_denovo_candidates},{d.n_pubchem_candidates}\n"
             )
     print(f"\n[OK] wrote {out_dir}/summary.json and diagnostics.csv")
     return 0
