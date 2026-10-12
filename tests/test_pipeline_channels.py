@@ -122,11 +122,14 @@ class TestFragmentationChannelWiring:
         assert "fragmentation_score" in DEFAULT_WEIGHTS
         assert DEFAULT_WEIGHTS["fragmentation_score"] > 0.0
 
-    def test_fpnet_score_has_nonzero_default_weight(self):
+    def test_fpnet_has_nonzero_default_weight_via_zscore(self):
+        """FPNet enters fusion as a within-set z-score (``fpnet_z``), never the
+        raw dot product (which is ~1,000-2,000 for every candidate and would
+        drown every other channel under any fixed weight)."""
         from casmi.channels.fusion import DEFAULT_WEIGHTS
 
-        assert "fpnet_score" in DEFAULT_WEIGHTS
-        assert DEFAULT_WEIGHTS["fpnet_score"] > 0.0
+        assert DEFAULT_WEIGHTS.get("fpnet_z", 0.0) > 0.0
+        assert "fpnet_score" not in DEFAULT_WEIGHTS
 
     def test_fuse_score_changes_with_fragmentation_feature(self):
         """Direct test of fuse() itself: two otherwise-identical candidates
