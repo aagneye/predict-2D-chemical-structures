@@ -56,6 +56,14 @@ class Split:
     novelty_class: dict[str, int]
     excluded_from_pool: set[str]
     holdout_keys: list[str] = field(default_factory=list)
+    #: Identity key per row (the scorer key when ``row_groups`` was given,
+    #: else the stored ``inchikey14``). Downstream scripts group spectra into
+    #: query molecules by this, so it must be what ``novelty_class`` is keyed by.
+    row_key: np.ndarray | None = None
+    #: Rows in neither mask: non-query spectra of forced panel structures
+    #: (e.g. an Orbitrap spectrum of a compound whose timsTOF spectra are the
+    #: query). They leave the library *and* the query, as in the real test.
+    dropped_mask: np.ndarray | None = None
 
     def class_of(self, key: str) -> int | None:
         return self.novelty_class.get(key)
@@ -98,6 +106,9 @@ def make_split(
     config: SplitConfig | None = None,
     database_keys: set[str] | None = None,
     forced_class2_keys: set[str] | None = None,
+    query_libs: set[str] | None = None,
+    row_groups: np.ndarray | None = None,
+    fixed_holdout: dict[str, int] | None = None,
 ) -> Split:
     """Build a structure-level split with synthetic novelty classes.
 
@@ -116,6 +127,18 @@ def make_split(
             ``enveda-np-examples`` compounds measured on the test instrument —
             into a "known natural product, no reference spectrum" panel, the
             scenario the hidden test is dominated by.
+        query_libs: For forced structures, only spectra from these libraries
+            become the query; their other spectra are *dropped* (neither
+            library nor query). A panel compound with 645 spectra across nine
+            libraries is not a test molecule with 1-16 timsTOF spectra.
+        row_groups: Optional per-row identity replacing ``inchikey14`` for
+            splitting, e.g. the scorer key: stored keys disagree with the
+            scorer for ~1.6% of structures, so a hold-out keyed by stored key
+            leaves sibling spectra of the same scored skeleton in the library.
+            ``forced_class2_keys``/``fixed_holdout``/``database_keys`` are then
+            interpreted in the same key space.
+        fixed_holdout: ``key -> class`` to reuse an earlier split's hold-out
+            (so a model trained against it stays leak-free) instead of sampling.
 
     Returns:
         A :class:`Split`. Note that class-1 rows are *not* fully removed from
@@ -128,6 +151,14 @@ def make_split(
     ingest_lib = np.asarray(ingest_lib, dtype=object)
     if inchikey14.shape != ingest_lib.shape:
         raise ValueError("inchikey14 and ingest_lib must be the same length")
+    if row_groups is not None:
+        row_groups = np.asarray(row_groups, dtype=object)
+        if row_groups.shape != inchikey14.shape:
+            raise ValueError("row_groups must align with inchikey14")
+        # Rows whose scorer key could not be computed keep their stored key.
+        inchikey14 = np.where(
+            [bool(g) for g in row_groups], row_groups, inchikey14
+        ).astype(object)
 
     rng = np.random.default_rng(cfg.random_seed)
     structure_libs = _structure_libraries(inchikey14, ingest_lib)
@@ -139,6 +170,9 @@ def make_split(
             spectra_per_key[key] += 1
 
     forced = {k for k in (forced_class2_keys or set()) if k in structure_libs}
+    if fixed_holdout is not None:
+        fixed = {k: c for k, c in fixed_holdout.items() if k in structure_libs}
+        forced = forced | {k for k, c in fixed.items() if c == CLASS_DATABASE and k in forced}
     keys = sorted(k for k in structure_libs if k not in forced)
     if not keys and not forced:
         raise ValueError("no structures to split")
@@ -150,7 +184,10 @@ def make_split(
         weights /= weights.sum()
 
     n_holdout = min(cfg.n_holdout, len(keys))
-    if n_holdout:
+    if fixed_holdout is not None:
+        holdout = sorted(k for k in fixed if k not in forced)
+        n_holdout = len(holdout)
+    elif n_holdout:
         chosen_idx = rng.choice(len(keys), size=n_holdout, replace=False, p=weights)
         holdout = [keys[i] for i in chosen_idx]
     else:
@@ -171,7 +208,13 @@ def make_split(
     class1 = multi_spectrum[:n_class1]
     remaining = multi_spectrum[n_class1:] + single_spectrum
 
-    if database_keys is not None:
+    if fixed_holdout is not None:
+        # Classes come from the earlier split; a class-1 key that lost its
+        # sibling spectrum under the new identity becomes class 2.
+        class1 = [k for k in holdout if fixed[k] == CLASS_LIBRARY and spectra_per_key[k] >= 2]
+        class2 = [k for k in holdout if k not in set(class1) and fixed[k] != CLASS_NOVEL]
+        class3 = [k for k in holdout if fixed[k] == CLASS_NOVEL]
+    elif database_keys is not None:
         # Prefer database-absent structures for class 3 so the cohort is truly
         # unreachable by retrieval; fall back to arbitrary keys if too few.
         absent = [k for k in remaining if k not in database_keys]
@@ -201,6 +244,7 @@ def make_split(
     # rest remain, which is what "reference spectra exist" means.
     val_mask = np.zeros(inchikey14.shape, dtype=bool)
     train_mask = np.zeros(inchikey14.shape, dtype=bool)
+    dropped_mask = np.zeros(inchikey14.shape, dtype=bool)
     query_taken: set[str] = set()
     for row, key in enumerate(inchikey14):
         if not key or key not in holdout_set:
@@ -212,8 +256,22 @@ def make_split(
                 query_taken.add(key)
             else:
                 train_mask[row] = True
+        elif key in forced and query_libs is not None:
+            if (ingest_lib[row] or "unknown") in query_libs:
+                val_mask[row] = True
+            else:
+                dropped_mask[row] = True
         else:
             val_mask[row] = True
+
+    # A forced structure with no spectrum from a query library has nothing
+    # to be queried with: drop it from the hold-out entirely.
+    if query_libs is not None and forced:
+        queried = set(inchikey14[val_mask])
+        for key in forced - queried:
+            novelty_class.pop(key, None)
+            holdout_set.discard(key)
+            dropped_mask |= inchikey14 == key
 
     return Split(
         train_mask=train_mask,
@@ -221,6 +279,8 @@ def make_split(
         novelty_class=novelty_class,
         excluded_from_pool=set(class3),
         holdout_keys=sorted(holdout_set),
+        row_key=inchikey14 if row_groups is not None else None,
+        dropped_mask=dropped_mask,
     )
 
 
@@ -237,9 +297,16 @@ def verify_no_leakage(
             if masks overlap or fail to cover every row.
     """
     inchikey14 = np.asarray(inchikey14, dtype=object)
+    if split.row_key is not None:
+        inchikey14 = np.asarray(split.row_key, dtype=object)
     if np.any(split.train_mask & split.val_mask):
         raise AssertionError("train and val masks overlap")
-    if not np.all(split.train_mask | split.val_mask):
+    neither = ~(split.train_mask | split.val_mask)
+    if split.dropped_mask is not None:
+        if np.any(split.dropped_mask & (split.train_mask | split.val_mask)):
+            raise AssertionError("dropped rows overlap a mask")
+        neither &= ~split.dropped_mask
+    if np.any(neither):
         raise AssertionError("some rows belong to neither side")
 
     train_keys = set(inchikey14[split.train_mask])
