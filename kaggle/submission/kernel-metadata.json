@@ -11,7 +11,9 @@
     "enveda-CASMI26-molecule-id-mass-spectra"
   ],
   "dataset_sources": [
-    "aagneye/casmi26-baseline-assets"
+    "aagneye/casmi26-baseline-assets",
+    "ahmedberatozer/casmi26-pubchem-tier",
+    "dmitriigluzdov/casmi26-pubchem-popularity-prior"
   ],
   "kernel_sources": []
 }
