@@ -178,8 +178,31 @@ def propagate_to_candidates(
     * ``analog_top_tanimoto``: Tanimoto to the single best-matching analog.
     * ``analog_mean``: similarity-weighted mean, less spiky than the max.
     """
-    ana_cfg = analog_config or CFG.analog
     n = len(candidate_indices)
+    if n == 0:
+        return propagate_fingerprints(np.zeros((0, pool.n_bits), dtype=np.uint8), pool, analogs,
+                                      analog_config=analog_config)
+    return propagate_fingerprints(
+        pool.fingerprints(candidate_indices), pool, analogs, analog_config=analog_config
+    )
+
+
+def propagate_fingerprints(
+    candidate_fp: np.ndarray,
+    pool: CandidatePool,
+    analogs: list[Analog],
+    analog_config: AnalogConfig | None = None,
+) -> dict[str, np.ndarray]:
+    """:func:`propagate_to_candidates` for candidates given as fingerprint rows.
+
+    Lets channels whose structures are *not* pool members (PubChem-only
+    proposals, de novo output) receive the same analog evidence as pool
+    candidates. The analogs themselves must still be pool members, since
+    that is where their fingerprints live.
+    """
+    ana_cfg = analog_config or CFG.analog
+    candidate_fp = np.asarray(candidate_fp)
+    n = candidate_fp.shape[0]
     empty = np.zeros(n, dtype=np.float32)
     if n == 0 or not analogs:
         return {
@@ -206,7 +229,6 @@ def propagate_to_candidates(
             "analog_mean": empty.copy(),
         }
 
-    candidate_fp = pool.fingerprints(candidate_indices)
     analog_fp = pool.fingerprints(np.asarray(analog_rows, dtype=np.int64))
     tanimoto = tanimoto_matrix(candidate_fp, analog_fp)
 
