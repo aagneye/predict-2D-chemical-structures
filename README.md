@@ -23,6 +23,12 @@ structures (SMILES) for each test molecule from its LC-MS/MS spectra.
    design, Azure compute plan. **Start here for "what do I do next".**
 8. `docs/07-codebase-guide.md` — what exists in `src/`, design rationale,
    end-to-end workflow
+9. `docs/08-status-2026-10-11-gap-analysis.md` — why the public score was
+   0.148, what the 0.43+ public lineage does, the ordered plan to the top 10
+10. `docs/09-literature-review-2026-10-13.md` — **current literature review**
+    (CASMI, Enveda papers, MassSpecGym audit, retrieval, forward simulators,
+    de novo, proteomics lessons) with the ranked implications for our build.
+    Supersedes `docs/03` where they disagree.
 
 For AI-assisted sessions: `.kiro/steering/project-context.md` and
 `.kiro/steering/codebase-map.md` hold condensed orientation; `.kiro/memory/`
