@@ -29,6 +29,8 @@ structures (SMILES) for each test molecule from its LC-MS/MS spectra.
     (CASMI, Enveda papers, MassSpecGym audit, retrieval, forward simulators,
     de novo, proteomics lessons) with the ranked implications for our build.
     Supersedes `docs/03` where they disagree.
+11. `docs/10-claude-skills.md` — the 21 third-party Claude Code skills enabled
+    in `.claude/skills/`, pinned commits, safety review, and what to re-install.
 
 For AI-assisted sessions: `.kiro/steering/project-context.md` and
 `.kiro/steering/codebase-map.md` hold condensed orientation; `.kiro/memory/`
