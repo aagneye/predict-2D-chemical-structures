@@ -52,3 +52,6 @@ kaggle/**/out/
 *.pem
 kaggle.json
 service-account*.json
+
+# --- Third-party skill clones (pinned in scripts/sync_skills.sh) ---
+third_party/
