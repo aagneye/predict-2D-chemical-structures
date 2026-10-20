@@ -45,7 +45,8 @@ def reciprocal_ranks(
     out: dict[str, float] = {}
     order = np.argsort(groups, kind="stable")
     groups_sorted = groups[order]
-    boundaries = np.flatnonzero(np.diff(groups_sorted)) + 1
+    # Group ids are strings (inchikey14), so compare neighbours instead of np.diff.
+    boundaries = np.flatnonzero(groups_sorted[1:] != groups_sorted[:-1]) + 1
     for chunk in np.split(order, boundaries):
         molecule = str(groups[chunk[0]])
         ranked = chunk[np.argsort(-probabilities[chunk], kind="stable")][:k]
