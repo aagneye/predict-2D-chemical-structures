@@ -232,8 +232,9 @@ def main() -> int:
             popularity=popularity,
             pubchem_tier=pubchem_tier,
             pubchem_config=pubchem_config,
-            # Class-3 truths are absent from PubChem in the real test; keep it so.
-            pubchem_blocklist=excluded | scorer_excluded,
+            # Only class-3 truths are absent from PubChem in the real test; class 2 may
+            # legitimately be found there even when the pool no longer holds it.
+            pubchem_blocklist={k for k, c in novelty.items() if c == 3} | scorer_excluded,
             derivation_config=derivation_config,
         )
         if not candidates:
