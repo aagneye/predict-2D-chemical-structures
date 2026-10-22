@@ -71,6 +71,10 @@ FEATURE_NAMES: tuple[str, ...] = (
     "popularity_rank",
     "popularity_z",
     "pubchem_only",
+    "derived",
+    "derivation_parent_sim",
+    "derivation_steps",
+    "derivation_support",
     "log_n_candidates",
 )
 N_FEATURES = len(FEATURE_NAMES)
@@ -182,6 +186,10 @@ def assemble_features(
         "popularity_rank": _rank_normalise(popularity),
         "popularity_z": _zscore(popularity),
         "pubchem_only": column("pubchem_only"),
+        "derived": column("derived"),
+        "derivation_parent_sim": column("derivation_parent_sim"),
+        "derivation_steps": column("derivation_steps"),
+        "derivation_support": column("derivation_support"),
         "log_n_candidates": np.full(n, np.log1p(n)),
     }
     matrix = np.column_stack([columns[name] for name in FEATURE_NAMES])
