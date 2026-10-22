@@ -182,3 +182,45 @@ class TestTrainAndPredict:
     def test_reranker_rejects_empty_model_list(self):
         with pytest.raises(ValueError, match="at least one"):
             Reranker(models=[])
+
+
+class TestLegacyRankerCompatibility:
+    def test_29_feature_model_scores_a_33_feature_matrix(self):
+        from sklearn.ensemble import HistGradientBoostingClassifier
+
+        from casmi.channels.ranker import FEATURE_NAMES, Reranker, _infer_feature_names
+
+        legacy_names = _infer_feature_names(len(FEATURE_NAMES) - 4)
+        assert legacy_names is not None and "derived" not in legacy_names
+        rng = np.random.default_rng(0)
+        x_old = rng.normal(size=(200, len(legacy_names)))
+        y = (x_old[:, 0] > 0).astype(int)
+        model = HistGradientBoostingClassifier(max_iter=20).fit(x_old, y)
+        ranker = Reranker([model])
+        assert ranker.feature_names == legacy_names
+        full = np.zeros((5, len(FEATURE_NAMES)))
+        cols = [FEATURE_NAMES.index(n) for n in legacy_names]
+        full[:, cols] = x_old[:5]
+        np.testing.assert_allclose(
+            ranker.predict_proba(full), model.predict_proba(x_old[:5])[:, 1]
+        )
+
+    def test_feature_names_round_trip(self, tmp_path):
+        from sklearn.ensemble import HistGradientBoostingClassifier
+
+        from casmi.channels.ranker import FEATURE_NAMES, Reranker
+
+        x = np.random.default_rng(1).normal(size=(50, len(FEATURE_NAMES)))
+        model = HistGradientBoostingClassifier(max_iter=5).fit(x, (x[:, 0] > 0).astype(int))
+        Reranker([model], feature_names=FEATURE_NAMES).save(tmp_path / "r.pkl")
+        assert Reranker.load(tmp_path / "r.pkl").feature_names == FEATURE_NAMES
+
+    def test_unknown_width_is_rejected(self):
+        from sklearn.ensemble import HistGradientBoostingClassifier
+
+        from casmi.channels.ranker import Reranker
+
+        x = np.random.default_rng(2).normal(size=(40, 7))
+        model = HistGradientBoostingClassifier(max_iter=5).fit(x, (x[:, 0] > 0).astype(int))
+        with pytest.raises(ValueError, match="cannot map"):
+            Reranker([model])
