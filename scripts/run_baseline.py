@@ -90,6 +90,11 @@ def main() -> int:
     )
     parser.add_argument("--pubchem-top-k", type=int, default=25)
     parser.add_argument(
+        "--derivation",
+        action="store_true",
+        help="enable Channel 8 (analog derivation of novel structures; needs FPNet)",
+    )
+    parser.add_argument(
         "--popularity-mu",
         type=float,
         default=0.0,
@@ -219,6 +224,13 @@ def main() -> int:
             f"covers {covered / max(len(pool), 1):.1%} of the pool"
         )
 
+    derivation_config = None
+    if args.derivation:
+        from casmi.channels.derivation import DerivationConfig
+
+        derivation_config = DerivationConfig()
+        print("[OK] Channel 8 (analog derivation) enabled")
+
     pubchem_tier = None
     pubchem_config = None
     if args.pubchem_tier:
@@ -250,6 +262,9 @@ def main() -> int:
         popularity_mu=args.popularity_mu,
         pubchem_tier=pubchem_tier,
         pubchem_config=pubchem_config,
+        # Class-3 truths are absent from PubChem in the real test; keep it so.
+        pubchem_blocklist=excluded | scorer_excluded,
+        derivation_config=derivation_config,
     )
 
     scores = evaluate_predictions(
@@ -270,6 +285,8 @@ def main() -> int:
         active_channels.append(f"popularity(mu={args.popularity_mu})")
     if args.pubchem_tier:
         active_channels.append(f"pubchem(top_k={args.pubchem_top_k})")
+    if args.derivation:
+        active_channels.append("derivation")
     if args.ranker:
         active_channels.append("gbm_reranker")
     print(f"\n=== Active channels: {', '.join(active_channels)} ===")
@@ -305,7 +322,7 @@ def main() -> int:
             "molecule_id,target_mass,n_spectra,n_candidates,"
             "best_library_sim,best_analog_sim,n_analogs,top_score,top_source,"
             "best_fragmentation_score,best_fpnet_score,used_reranker,n_denovo_candidates,"
-            "n_pubchem_candidates\n"
+            "n_pubchem_candidates,n_derived_candidates\n"
         )
         for d in result.diagnostics:
             handle.write(
@@ -313,7 +330,7 @@ def main() -> int:
                 f"{d.best_library_similarity:.4f},{d.best_analog_similarity:.4f},"
                 f"{d.n_analogs},{d.top_score:.4f},{d.top_source},"
                 f"{d.best_fragmentation_score:.4f},{d.best_fpnet_score:.4f},{d.used_reranker},"
-                f"{d.n_denovo_candidates},{d.n_pubchem_candidates}\n"
+                f"{d.n_denovo_candidates},{d.n_pubchem_candidates},{d.n_derived_candidates}\n"
             )
     print(f"\n[OK] wrote {out_dir}/summary.json and diagnostics.csv")
     return 0
