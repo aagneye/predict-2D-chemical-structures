@@ -70,6 +70,11 @@ DEFAULT_WEIGHTS: dict[str, float] = {
     # window's mean is worth about half an analog hit.
     "fpnet_z": 0.25,
     "denovo_score": 0.10,
+    # A derived (generated) structure is a hypothesis, not a database hit:
+    # under plain fusion it must out-score same-mass database candidates on
+    # FPNet/analog evidence by a margin before it can lead. The reranker learns
+    # the real trade-off from class-3 training rows.
+    "derived": -0.15,
     # PubChem popularity is log1p(substances)+log1p(PubMed), roughly 0-20, so
     # 0.02 per unit lets a very well documented structure (~18) earn ~0.36:
     # enough to break ties among same-formula isomers, not enough to outrank
