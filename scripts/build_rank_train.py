@@ -74,6 +74,11 @@ def main() -> int:
         help="directory with pc_lsid.npy/pc_lpmid.npy aligned with the tier",
     )
     parser.add_argument("--pubchem-top-k", type=int, default=25)
+    parser.add_argument(
+        "--derivation",
+        action="store_true",
+        help="enable Channel 8 (analog derivation of novel structures; needs FPNet)",
+    )
     args = parser.parse_args()
 
     split_data = np.load(args.split, allow_pickle=False)
@@ -162,6 +167,13 @@ def main() -> int:
         popularity = PopularityPrior.load(args.popularity)
         print(f"[OK] loaded popularity prior: {len(popularity):,} structures")
 
+    derivation_config = None
+    if args.derivation:
+        from casmi.channels.derivation import DerivationConfig
+
+        derivation_config = DerivationConfig()
+        print("[OK] Channel 8 (analog derivation) enabled")
+
     pubchem_tier = None
     pubchem_config = None
     if args.pubchem_tier:
@@ -201,6 +213,9 @@ def main() -> int:
             popularity=popularity,
             pubchem_tier=pubchem_tier,
             pubchem_config=pubchem_config,
+            # Class-3 truths are absent from PubChem in the real test; keep it so.
+            pubchem_blocklist=excluded | scorer_excluded,
+            derivation_config=derivation_config,
         )
         if not candidates:
             continue
