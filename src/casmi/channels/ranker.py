@@ -251,35 +251,81 @@ def build_training_matrix(
     )
 
 
+#: Features added after a model generation was trained. A model trained before
+#: them is served by dropping these columns, so old pickles keep working.
+_LATER_FEATURES: tuple[tuple[str, ...], ...] = (
+    ("derived", "derivation_parent_sim", "derivation_steps", "derivation_support"),
+)
+
+
+def _infer_feature_names(n_features: int) -> tuple[str, ...] | None:
+    """Feature layout of a legacy model that did not store its feature names."""
+    names = FEATURE_NAMES
+    if n_features == len(names):
+        return names
+    for group in reversed(_LATER_FEATURES):
+        names = tuple(n for n in names if n not in group)
+        if n_features == len(names):
+            return names
+    return None
+
+
 class Reranker:
     """Bagged ``HistGradientBoostingClassifier`` ensemble over priors x seeds.
 
     Prediction averages ``predict_proba`` across every ensemble member, which
     is what makes the bagging actually reduce variance rather than just
     picking one arbitrary member.
+
+    ``feature_names`` records the column layout the models were trained on.
+    :meth:`predict_proba` accepts the current full :data:`FEATURE_NAMES` matrix
+    and selects those columns, so a model trained before newer features were
+    added still scores correctly instead of crashing on a width mismatch.
     """
 
-    def __init__(self, models: list, config: RankerConfig | None = None) -> None:
+    def __init__(
+        self,
+        models: list,
+        config: RankerConfig | None = None,
+        feature_names: tuple[str, ...] | None = None,
+    ) -> None:
         if not models:
             raise ValueError("Reranker requires at least one fitted model")
         self.models = models
         self.config = config or CFG.ranker
+        n_in = getattr(models[0], "n_features_in_", N_FEATURES)
+        self.feature_names = tuple(feature_names) if feature_names else _infer_feature_names(n_in)
+        if self.feature_names is None:
+            raise ValueError(f"cannot map a {n_in}-feature model onto the current feature set")
+        missing = [n for n in self.feature_names if n not in FEATURE_NAMES]
+        if missing:
+            raise ValueError(f"model uses features this code no longer produces: {missing}")
+        self._columns = np.array([FEATURE_NAMES.index(n) for n in self.feature_names])
 
     def predict_proba(self, features: np.ndarray) -> np.ndarray:
         """Mean positive-class probability across ensemble members."""
         if features.shape[0] == 0:
             return np.zeros(0, dtype=np.float64)
+        if features.shape[1] == N_FEATURES:
+            features = features[:, self._columns]
         return np.mean([m.predict_proba(features)[:, 1] for m in self.models], axis=0)
 
     def save(self, path: str | Path) -> None:
         with open(path, "wb") as handle:
-            pickle.dump({"models": self.models, "config": self.config}, handle)
+            pickle.dump(
+                {"models": self.models, "config": self.config,
+                 "feature_names": list(self.feature_names)},
+                handle,
+            )
 
     @classmethod
     def load(cls, path: str | Path) -> Reranker:
         with open(path, "rb") as handle:
             payload = pickle.load(handle)
-        return cls(models=payload["models"], config=payload["config"])
+        return cls(
+            models=payload["models"], config=payload["config"],
+            feature_names=payload.get("feature_names"),
+        )
 
 
 def train_ranker(
@@ -313,4 +359,4 @@ def train_ranker(
             )
             model.fit(features, labels, sample_weight=sample_weight)
             models.append(model)
-    return Reranker(models=models, config=cfg)
+    return Reranker(models=models, config=cfg, feature_names=FEATURE_NAMES)
