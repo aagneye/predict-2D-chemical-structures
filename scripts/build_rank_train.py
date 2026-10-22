@@ -42,6 +42,12 @@ def main() -> int:
     parser.add_argument("--out", required=True, help="output .npz path")
     parser.add_argument("--limit", type=int, default=None, help="cap molecules, for smoke tests")
     parser.add_argument(
+        "--realistic-pool",
+        default=None,
+        help="external_keys.txt from build_external_keys.py: held-out class-2 structures stay "
+        "in the pool only if an external database has them (test-like class 2)",
+    )
+    parser.add_argument(
         "--fragmentation", action="store_true", help="enable Channel 5 features"
     )
     parser.add_argument(
@@ -131,6 +137,19 @@ def main() -> int:
     }
     pool = pool.exclude_keys(scorer_excluded - excluded)
     print(f"[OK] pool after scorer-key class-3 exclusion: {len(pool):,} structures")
+    if args.realistic_pool:
+        from casmi.eval.realism import load_keys, realistic_pool_exclusions
+
+        external = load_keys(args.realistic_pool)
+        truth_keys = {m: (m, inchikey14(smi)) for m, smi in truth.items()}
+        drop = realistic_pool_exclusions(novelty, truth_keys, external)
+        before = len(pool)
+        pool = pool.exclude_keys(drop)
+        scorer_excluded = scorer_excluded | {
+            k for m, keys in truth_keys.items() if novelty.get(m) == 3 for k in keys if k
+        }
+        print(f"[OK] realistic pool: removed {before - len(pool):,} held-out structures "
+              f"not in an external database ({len(external):,} external keys)")
     if args.limit:
         keep_ids = list(truth)[: args.limit]
         frame = frame[frame["molecule_id"].isin(keep_ids)]
