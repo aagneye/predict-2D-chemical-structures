@@ -49,6 +49,19 @@ def main() -> int:
     parser.add_argument("--out", default="runs/baseline")
     parser.add_argument("--limit", type=int, default=None, help="cap molecules, for smoke tests")
     parser.add_argument(
+        "--sample-per-class",
+        type=int,
+        default=None,
+        help="evaluate a class-stratified random subset of this many molecules per class",
+    )
+    parser.add_argument("--sample-seed", type=int, default=0)
+    parser.add_argument(
+        "--realistic-pool",
+        default=None,
+        help="external_keys.txt from build_external_keys.py: held-out class-2 structures stay "
+        "in the pool only if an external database has them (test-like class 2)",
+    )
+    parser.add_argument(
         "--cohort-keys",
         default=None,
         help="newline-delimited inchikey14 file; evaluate only held-out molecules in it "
@@ -159,6 +172,28 @@ def main() -> int:
     pool = pool.exclude_keys(scorer_excluded - excluded)
     if len(pool) != before:
         print(f"[OK] removed {before - len(pool):,} more class-3 structures by scorer key")
+    if args.realistic_pool:
+        from casmi.eval.realism import load_keys, realistic_pool_exclusions
+
+        external = load_keys(args.realistic_pool)
+        truth_keys = {m: (m, inchikey14(smi)) for m, smi in truth.items()}
+        drop = realistic_pool_exclusions(novelty, truth_keys, external)
+        before = len(pool)
+        pool = pool.exclude_keys(drop)
+        scorer_excluded = scorer_excluded | {
+            k for m, keys in truth_keys.items() if novelty.get(m) == 3 for k in keys if k
+        }
+        print(f"[OK] realistic pool: removed {before - len(pool):,} held-out structures "
+              f"not in an external database ({len(external):,} external keys)")
+    if args.sample_per_class:
+        from casmi.eval.realism import stratified_sample
+
+        keep_ids = set(stratified_sample(
+            {m: novelty[m] for m in truth if m in novelty}, args.sample_per_class, args.sample_seed
+        ))
+        frame = frame[frame["molecule_id"].isin(keep_ids)]
+        truth = {k: v for k, v in truth.items() if k in keep_ids}
+        print(f"[INFO] stratified sample: {len(truth):,} molecules")
     if args.cohort_keys:
         cohort = {
             line.strip()
