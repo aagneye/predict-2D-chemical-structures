@@ -37,6 +37,7 @@ from casmi.channels.analog import (
     propagate_to_candidates,
 )
 from casmi.channels.denovo import DenovoChannelConfig, denovo_score_feature, generate_candidates
+from casmi.channels.derivation import DerivationConfig, derive_candidates
 from casmi.channels.fragmentation import FragmentationConfig, fragmentation_scores
 from casmi.channels.fusion import (
     DEFAULT_WEIGHTS,
@@ -90,6 +91,8 @@ class MoleculeDiagnostics:
     n_denovo_candidates: int = 0
     #: Number of PubChem-only (Channel 7) proposals added for this molecule.
     n_pubchem_candidates: int = 0
+    #: Number of analog-derived (Channel 8) candidates added for this molecule.
+    n_derived_candidates: int = 0
 
 
 @dataclass
@@ -138,6 +141,8 @@ def build_scored_candidates(
     popularity: PopularityPrior | None = None,
     pubchem_tier: PubChemTier | None = None,
     pubchem_config: PubChemConfig | None = None,
+    pubchem_blocklist: set[str] | None = None,
+    derivation_config: DerivationConfig | None = None,
 ) -> tuple[list[ScoredCandidate], dict[str, Any]]:
     """Assemble every channel's per-candidate features for one molecule.
 
@@ -169,6 +174,11 @@ def build_scored_candidates(
             absent from the pool window, scored like pool candidates and flagged
             ``pubchem_only = 1``.
         pubchem_config: Window / shortlist settings for Channel 7.
+        pubchem_blocklist: Scorer keys Channel 7 must never propose. Used only
+            by evaluation scripts to keep class-3 truths unreachable, as they
+            are in the real test (absent from PubChem by definition).
+        derivation_config: Enables Channel 8 (analog derivation) when given;
+            requires ``fpnet_model``. ``None`` (the default) skips it.
 
     Returns:
         ``(candidates, context)`` where ``context`` carries the raw
@@ -198,7 +208,9 @@ def build_scored_candidates(
     # of same-formula isomers, and pruning them by mass proximity alone threw
     # the true structure away for ~40% of class-2 molecules.
     fpnet_logits = None
-    if fpnet_model is not None and candidate_indices.size:
+    # Run even when the pool window is empty: that is precisely the novel
+    # (class-3) case, where Channels 7 and 8 still need the predicted fingerprint.
+    if fpnet_model is not None:
         from casmi.models.train import predict_logits
 
         fpnet_logits = predict_logits(
@@ -336,7 +348,7 @@ def build_scored_candidates(
             target,
             fpnet_logits,
             _fingerprint_calculator(pool.n_bits),
-            exclude_keys=existing,
+            exclude_keys=existing | (pubchem_blocklist or set()),
             config=pubchem_config,
         )
         if pubchem_proposals:
@@ -376,6 +388,66 @@ def build_scored_candidates(
                             "fpnet_normalised_score": proposal.fpnet_normalised_score,
                             "popularity": proposal.popularity,
                             "pubchem_only": 1.0,
+                        },
+                    )
+                )
+
+    # Channel 8: analog derivation. Novel structures built by applying the
+    # biosynthetic edit implied by each analog's mass shift (hydroxyl, methyl,
+    # sugar, acyl...) to the analog itself; see casmi.channels.derivation.
+    derived: list = []
+    if derivation_config is not None and fpnet_logits is not None and analogs:
+        parents = []
+        for analog in analogs:
+            row = pool.index_of(analog.inchikey14)
+            if row >= 0:
+                parents.append((pool.smiles[row], analog.similarity))
+        derived = derive_candidates(
+            parents,
+            target,
+            _fingerprint_calculator(pool.n_bits),
+            fpnet_logits,
+            exclude_keys={c.inchikey14 for c in candidates},
+            config=derivation_config,
+        )
+        if derived:
+            d_fp = np.stack([d.fingerprint for d in derived])
+            d_analog = propagate_fingerprints(d_fp, pool, analogs, analog_config=cfg.analog)
+            d_mass = np.array([d.mass for d in derived], dtype=np.float64)
+            d_mass_feature = mass_error_penalty(d_mass, target, cfg.candidates.ppm_window)
+            d_frag = np.zeros(len(derived), dtype=np.float32)
+            if fragmentation_channel:
+                d_frag = fragmentation_scores(
+                    [d.smiles for d in derived],
+                    molecule.spectra,
+                    positive_mode=molecule.is_positive,
+                    config=FragmentationConfig(),
+                )
+            for j, item in enumerate(derived):
+                candidates.append(
+                    ScoredCandidate(
+                        inchikey14=item.inchikey14,
+                        smiles=item.smiles,
+                        score=0.0,
+                        features={
+                            "library_similarity": 0.0,
+                            "analog_power": float(d_analog["analog_power"][j]),
+                            "analog_linear": float(d_analog["analog_linear"][j]),
+                            "analog_best_tanimoto": float(d_analog["analog_best_tanimoto"][j]),
+                            "analog_top_tanimoto": float(d_analog["analog_top_tanimoto"][j]),
+                            "analog_mean": float(d_analog["analog_mean"][j]),
+                            "mass_error_penalty": float(d_mass_feature[j]),
+                            "mass_error_ppm": abs(item.mass - target) / target * 1e6,
+                            "fragmentation_score": float(d_frag[j]),
+                            "fpnet_score": item.fpnet_score,
+                            "fpnet_normalised_score": item.fpnet_normalised_score,
+                            "popularity": (
+                                popularity.get(item.inchikey14) if popularity is not None else 0.0
+                            ),
+                            "derived": 1.0,
+                            "derivation_parent_sim": item.parent_similarity,
+                            "derivation_steps": float(item.steps),
+                            "derivation_support": float(item.support),
                         },
                     )
                 )
@@ -422,6 +494,7 @@ def build_scored_candidates(
         "fpnet_scores": fpnet_feature,
         "denovo_candidates": denovo_candidates,
         "pubchem_candidates": pubchem_proposals,
+        "derived_candidates": derived,
     }
     return candidates, context
 
@@ -463,6 +536,8 @@ def predict_molecule(
     popularity_mu: float = 0.0,
     pubchem_tier: PubChemTier | None = None,
     pubchem_config: PubChemConfig | None = None,
+    pubchem_blocklist: set[str] | None = None,
+    derivation_config: DerivationConfig | None = None,
 ) -> tuple[list[str], MoleculeDiagnostics]:
     """Produce a ranked SMILES list and diagnostics for one molecule.
 
@@ -519,6 +594,8 @@ def predict_molecule(
         popularity=popularity,
         pubchem_tier=pubchem_tier,
         pubchem_config=pubchem_config,
+        pubchem_blocklist=pubchem_blocklist,
+        derivation_config=derivation_config,
     )
     library_hits = context["library_hits"]
     analogs = context["analogs"]
@@ -586,6 +663,7 @@ def predict_molecule(
         used_reranker=used_reranker,
         n_denovo_candidates=len(denovo_candidates),
         n_pubchem_candidates=len(context["pubchem_candidates"]),
+        n_derived_candidates=len(context["derived_candidates"]),
     )
     return [c.smiles for c in ranked if c.smiles], diagnostics
 
@@ -610,6 +688,8 @@ def run_pipeline(
     popularity_mu: float = 0.0,
     pubchem_tier: PubChemTier | None = None,
     pubchem_config: PubChemConfig | None = None,
+    pubchem_blocklist: set[str] | None = None,
+    derivation_config: DerivationConfig | None = None,
 ) -> PipelineResult:
     """Run the baseline over many molecules.
 
@@ -644,6 +724,8 @@ def run_pipeline(
             popularity_mu=popularity_mu,
             pubchem_tier=pubchem_tier,
             pubchem_config=pubchem_config,
+            pubchem_blocklist=pubchem_blocklist,
+            derivation_config=derivation_config,
         )
         result.predictions[molecule.molecule_id] = smiles
         result.diagnostics.append(diagnostics)
