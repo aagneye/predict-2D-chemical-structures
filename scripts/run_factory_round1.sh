@@ -34,15 +34,17 @@ stage() { echo "=== $(date -u '+%Y-%m-%dT%H:%M:%SZ') $1 ==="; }
     echo "PYTEST_EXIT=$?" >> "$WORK/logs/pytest_vm.log" ) &
 
   stage "1. external candidate tables + popularity v1"
-  mkdir -p "$EXT/coconut" "$EXT/pubchemlite" "$EXT/popularity"
-  [ -f "$EXT/coconut/coconut_candidates.csv" ] || kaggle datasets download dmitriigluzdov/casmi26-open-model-and-candidate-resources -f coconut_candidates.csv -p "$EXT/coconut" --unzip -q
-  [ -f "$EXT/pubchemlite/pubchemlite_candidates.csv" ] || kaggle datasets download dmitriigluzdov/casmi26-open-model-and-candidate-resources -f pubchemlite_candidates.csv -p "$EXT/pubchemlite" --unzip -q
+  # COCONUT membership = the np_coconut flag of pool_popularity.csv; PubChemLite = the
+  # ik14 column of its annotation table (the old candidate-CSV dataset is no longer public).
+  mkdir -p "$EXT/popularity"
+  [ -f "$EXT/popularity/pubchemlite_annotations.parquet" ] || kaggle datasets download dmitriigluzdov/casmi26-pubchem-popularity-prior -f pubchemlite_annotations.parquet -p "$EXT/popularity" -q
   [ -f "$EXT/popularity/pool_popularity.csv" ] || kaggle datasets download dmitriigluzdov/casmi26-pubchem-popularity-prior -f pool_popularity.csv -p "$EXT/popularity" --unzip -q
   [ -f "$KEEP/popularity_v1.npz" ] || "$PY" -c "from casmi.priors import PopularityPrior as P; P.from_csv('$EXT/popularity/pool_popularity.csv').save('$KEEP/popularity_v1.npz')"
 
   stage "2. external keys + emulator split (200 molecules per class)"
   [ -f "$KEEP/external_keys.txt" ] || "$PY" scripts/build_external_keys.py \
-      --csv "$EXT/coconut/coconut_candidates.csv" --csv "$EXT/pubchemlite/pubchemlite_candidates.csv" \
+      --csv "$EXT/popularity/pool_popularity.csv:np_coconut" \
+      --keys "$EXT/popularity/pubchemlite_annotations.parquet:ik14" \
       --out "$KEEP/external_keys.txt" --workers 48
   "$PY" scripts/make_emulator_split.py --split "$KEEP/split_v3.npz" --train "$DATA" \
       --external-keys "$KEEP/external_keys.txt" --per-class 200 --out "$KEEP/split_emu.npz"
