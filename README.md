@@ -34,6 +34,10 @@ structures (SMILES) for each test molecule from its LC-MS/MS spectra.
     the top 10 with gates.
 12. `docs/10-claude-skills.md` — the 21 third-party Claude Code skills enabled
     in `.claude/skills/`, pinned commits, safety review, and what to re-install.
+13. `docs/12-status-2026-10-26-where-the-score-is-lost.md` — **current plan**:
+    what the LB emulator says, where the score is lost, the three-track plan
+    (public base + our class-3 overlay), the targeted literature review, the
+    testing centre. `docs/factory/ledger.md` holds the live numbers.
 
 For AI-assisted sessions: `.kiro/steering/project-context.md` and
 `.kiro/steering/codebase-map.md` hold condensed orientation; `.kiro/memory/`

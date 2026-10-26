@@ -45,6 +45,25 @@ share is a free parameter until v9 (m3 > 0) is scored. Reading: the public score
 train) is easier than the real "has public spectra" class; and perfect class 1 + class 2
 caps our stack near 0.42 — class 3 and the domain factor α have to move to pass 0.46.
 
+### Overlay simulation (2026-10-26, `scripts/simulate_overlay.py`, split v3 rows)
+
+Base = non-derived candidates ranked by the v8 ranker (no class-3 channel, like the
+public recipes): 0.933 / 0.611 / 0.002. Inserting Channel 8 structures with
+`casmi.overlay.merge_overlay`:
+
+| Gate | Insert at | k | Gated | Class 1 | Class 2 | Class 3 | Δ public (fitted s3) | Δ (class 3 = ½) |
+|---|---|---|---|---|---|---|---|---|
+| lib_max < 0.8 | below rank 1 | 1 | 68% | 0.932 | 0.614 | **0.054** | **+0.005** | **+0.014** |
+| always | below rank 1 | 1 | 100% | 0.929 | 0.612 | 0.061 | +0.005 | +0.015 |
+| always | below rank 2 | 1 | 100% | 0.933 | 0.615 | 0.041 | +0.004 | +0.011 |
+| lib_max < 0.8 | below rank 1 | 3 | 68% | 0.931 | 0.610 | 0.055 | +0.004 | +0.013 |
+
+Replacing the base's rank 1 (insert at 0) never makes the top 15 under either weighting.
+Reading: one structure directly below rank 1 is nearly free for classes 1–2 (−0.001 to
+−0.004) and lifts class 3 to 0.05–0.06 (vs 0.10 when the v9 ranker may put it first).
+On a 0.467 base that is ≈ +0.005…+0.015 → 0.47–0.48; the top 10 (0.484) needs better
+Channel 8 recall (12% @25 now) on top of this.
+
 ## Built, not yet measured
 
 - 2026-10-21 **Channel 8, analog derivation** (`src/casmi/channels/derivation.py`):
@@ -70,6 +89,9 @@ ranker numbers; MolForge-from-bits for class 3; artifacts on `/mnt`.
 public (403); external keys now come from `pool_popularity.csv` (`np_coconut`) and
 `pubchemlite_annotations.parquet` (`ik14`) — 649/1,149 split-v3 class-2 keys reachable.
 The COCONUT/PubChemLite metadata elsewhere ships only as pickles: never unpickle them.
+2026-10-26: kernel v9 pushed 3 s after `kaggle datasets status` said "ready" ran against
+the *previous* dataset version (`No module named casmi.channels.derivation`). Wait a few
+minutes after a dataset version before `kaggle kernels push`, or pin the version.
 
 ## Open bets toward > 0.46 (ordered by expected gain per hour)
 
