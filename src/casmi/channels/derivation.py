@@ -250,33 +250,29 @@ def derive_candidates(
     cfg = config or DerivationConfig()
     usable = [(s, sim) for s, sim in parents if s and sim >= cfg.min_parent_similarity]
     usable = sorted(usable, key=lambda p: -p[1])[: cfg.n_parents]
-    by_key: dict[str, DerivedCandidate] = {}
+    # Products are pooled by canonical SMILES first; the scorer key (tautomer-canonical
+    # InChIKey) costs milliseconds per structure, so it is computed lazily below, only
+    # for the best-scoring products, which lets the caps be thousands rather than hundreds.
+    by_smiles: dict[str, DerivedCandidate] = {}
     for parent_smiles, similarity in usable:
         for smiles, (mol, steps, label) in derive_from_parent(
             parent_smiles, target_mass, cfg
         ).items():
-            key = inchikey14(smiles)
-            if key is None or key in exclude_keys:
-                continue
-            existing = by_key.get(key)
+            existing = by_smiles.get(smiles)
             if existing is None:
-                if len(by_key) >= cfg.max_products:
+                if len(by_smiles) >= cfg.max_products:
                     continue
                 fp = calculator.from_mol(mol)
                 if fp is None:
                     continue
-                by_key[key] = DerivedCandidate(
-                    smiles=smiles, inchikey14=key, mass=float(ExactMolWt(mol)),
+                by_smiles[smiles] = DerivedCandidate(
+                    smiles=smiles, inchikey14="", mass=float(ExactMolWt(mol)),
                     fingerprint=fp, parent_similarity=float(similarity),
                     steps=steps, support=1, paths=[label],
                 )
             else:
-                existing.support += 1
-                existing.parent_similarity = max(existing.parent_similarity, float(similarity))
-                existing.steps = min(existing.steps, steps)
-                if label not in existing.paths:
-                    existing.paths.append(label)
-    candidates = list(by_key.values())
+                _merge(existing, float(similarity), steps, label)
+    candidates = list(by_smiles.values())
     if not candidates:
         return []
     if fpnet_logits is not None:
@@ -291,4 +287,28 @@ def derive_candidates(
         candidates.sort(key=lambda c: (-c.fpnet_normalised_score, -c.parent_similarity))
     else:
         candidates.sort(key=lambda c: (-c.parent_similarity, c.steps))
-    return candidates[: cfg.top_k]
+    out: list[DerivedCandidate] = []
+    by_key: dict[str, DerivedCandidate] = {}
+    for candidate in candidates:
+        key = inchikey14(candidate.smiles)
+        if key is None or key in exclude_keys:
+            continue
+        if key in by_key:  # a tautomer of a better-scoring product
+            kept = by_key[key]
+            _merge(kept, candidate.parent_similarity, candidate.steps, candidate.paths[0])
+            kept.support += candidate.support - 1
+            continue
+        candidate.inchikey14 = key
+        by_key[key] = candidate
+        out.append(candidate)
+        if len(out) >= cfg.top_k:
+            break
+    return out
+
+
+def _merge(kept: DerivedCandidate, similarity: float, steps: int, label: str) -> None:
+    kept.support += 1
+    kept.parent_similarity = max(kept.parent_similarity, similarity)
+    kept.steps = min(kept.steps, steps)
+    if label not in kept.paths:
+        kept.paths.append(label)
