@@ -130,6 +130,9 @@ def main() -> int:
     parser.add_argument("--min-parent-similarity", type=float,
                         default=DerivationConfig.min_parent_similarity)
     parser.add_argument("--n-parents", type=int, default=DerivationConfig.n_parents)
+    parser.add_argument("--only-keys", default=None,
+                        help="text file of scorer keys: restrict to these class-3 molecules "
+                             "(e.g. natural-product-flagged ones, the hidden test's chemistry)")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
@@ -150,6 +153,11 @@ def main() -> int:
     frame = table.filter(pa.array(val_mask)).to_pandas()
     frame["molecule_id"] = np.asarray(split["row_key"], dtype=str)[val_mask]
     frame = frame[frame["molecule_id"].map(lambda m: novelty.get(m) == 3)]
+    if args.only_keys:
+        only = {line.strip() for line in open(args.only_keys, encoding="utf-8") if line.strip()}
+        frame = frame[frame["molecule_id"].isin(only)]
+        print(f"[INFO] restricted to {frame['molecule_id'].nunique()} class-3 molecules "
+              f"in {args.only_keys}", flush=True)
     ids = sorted(frame["molecule_id"].unique())
     rng = np.random.default_rng(args.seed)
     keep = set(rng.choice(ids, size=min(args.limit, len(ids)), replace=False).tolist())
