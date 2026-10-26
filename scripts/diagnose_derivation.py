@@ -31,7 +31,12 @@ from rdkit.Chem.rdMolDescriptors import CalcMolFormula
 
 from casmi.candidates.pool import CandidatePool
 from casmi.channels.analog import AnalogIndex, find_analogs
-from casmi.channels.derivation import TRANSFORMS, DerivationConfig, derive_from_parent
+from casmi.channels.derivation import (
+    TRANSFORMS,
+    DerivationConfig,
+    derive_from_parent,
+    formula_delta_counts,
+)
 from casmi.chem import inchikey14
 from casmi.config import CFG
 from casmi.data.loaders import load_spectral_library, query_molecules_from_table
@@ -49,7 +54,7 @@ def formula_counts(formula: str, sign: int = 1) -> Counter:
 
 
 def delta_counts(delta: str) -> Counter:
-    return formula_counts(delta[1:], -1 if delta[0] == "-" else 1)
+    return Counter(formula_delta_counts(delta))
 
 
 def vector(counts: Counter) -> tuple[tuple[str, int], ...]:
