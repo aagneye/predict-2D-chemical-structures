@@ -44,10 +44,12 @@ We re-ran the exact code of our three scored submissions on a test-like split an
    forum thread "Has anyone managed to improve their Class 3 score?" (Bull, Mansur,
    Tra Crew — ranks 466/225/40) reports the same: local class-3 gains do not move the
    board, and nobody has more than +0.003…0.004 from class 3.
-3. **Class 3 (worth up to 0.5 × share).** No public recipe has a channel for structures
-   absent from every database, so their class-3 MRR is ≈ 0. Our Channel 8 (biosynthetic
-   edits of spectral analogs) is the first non-zero number in this project (0.10 offline,
-   recall@25 12%). Whether it transfers is exactly what v9 tests.
+3. **Class 3 (worth up to 0.5 × share).** *Corrected 2026-10-26:* the public recipes do
+   generate database-absent structures — engine 1 runs `EngineCfg(generate=True)`, an
+   analogue generator that edits close library relatives (the panel dataset's notes say it
+   rebuilds answers removed from the pool). Our Channel 8 is the same idea built
+   independently (0.10 offline, recall@25 12% → 25% after the site edits). v9 showed our
+   version moves the board by ≈ +0.003, so class 3 is not where the gap is.
 4. **Class 1 transfer.** A library match on a different instrument needs tolerant
    similarity (energy-bucketed entropy similarity, merged spectra) — the 0.462 lineage's
    "N1A collision-energy" work is this.
@@ -71,6 +73,10 @@ We re-ran the exact code of our three scored submissions on a test-like split an
 ## 5. The plan — three tracks
 
 ### Track A — today: public base + our class-3 overlay (fastest to ≈ 0.47–0.48)
+
+*Update, same day:* emulator round 2 (v9 = 0.255) and the finding that the base already
+has its own analogue generator cut this track's expected gain to 0 … +0.005; see the
+ledger. Kept as a one-submission experiment.
 
 * Base: unchanged copy of the 0.467 notebook (`aagneye/casmi26-lb-0-467-base-…`,
   submitted). Also the 0.462 flexonafft recipe as a second data point.
