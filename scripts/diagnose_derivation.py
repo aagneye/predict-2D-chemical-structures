@@ -119,6 +119,12 @@ def main() -> int:
     parser.add_argument("--pool", required=True)
     parser.add_argument("--limit", type=int, default=400)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--max-steps", type=int, default=DerivationConfig.max_steps)
+    parser.add_argument("--max-products-per-path", type=int,
+                        default=DerivationConfig.max_products_per_path)
+    parser.add_argument("--min-parent-similarity", type=float,
+                        default=DerivationConfig.min_parent_similarity)
+    parser.add_argument("--n-parents", type=int, default=DerivationConfig.n_parents)
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
@@ -153,7 +159,11 @@ def main() -> int:
         for combo in combinations_with_replacement(sorted(singles), n):
             vec = add(*combo)
             steps.setdefault(vec, (n, "+".join(singles[c] for c in combo)))
-    cfg = DerivationConfig()
+    cfg = DerivationConfig(
+        max_steps=args.max_steps, max_products_per_path=args.max_products_per_path,
+        min_parent_similarity=args.min_parent_similarity, n_parents=args.n_parents,
+    )
+    print(f"[INFO] {cfg}", flush=True)
     categories: Counter = Counter()
     missing: Counter = Counter()
     examples: dict[str, list] = {}
