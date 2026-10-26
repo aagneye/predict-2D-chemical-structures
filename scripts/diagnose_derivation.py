@@ -76,6 +76,42 @@ def smiles_counts(smiles: str) -> Counter | None:
     return formula_counts(CalcMolFormula(mol).replace("+", "").replace("-", ""))
 
 
+def site_signature(small: Chem.Mol, large: Chem.Mol) -> str | None:
+    """If ``small`` is a substructure of ``large``: the extra fragment of ``large`` and the
+    atom types it attaches to (``a`` aromatic / ``A`` aliphatic, symbol, H count)."""
+    match = large.GetSubstructMatch(small)
+    if not match:
+        return None
+    matched = set(match)
+    extra = [a.GetIdx() for a in large.GetAtoms() if a.GetIdx() not in matched]
+    if not extra:
+        return None
+    attach = {
+        f"{'a' if nb.GetIsAromatic() else 'A'}{nb.GetSymbol()}H{nb.GetTotalNumHs()}"
+        for idx in extra
+        for nb in large.GetAtomWithIdx(idx).GetNeighbors()
+        if nb.GetIdx() in matched
+    }
+    fragment = Chem.MolFragmentToSmiles(large, atomsToUse=extra)
+    return f"{fragment} @ {','.join(sorted(attach))}"
+
+
+def edit_signature(parent_smiles: str, truth_smiles: str, vec) -> str:
+    """``+frag @ site`` for a pure addition, ``-frag @ site`` for a pure removal that is a
+    substructure relation; ``rearranged`` when the formula fits but the scaffold differs."""
+    parent, truth = Chem.MolFromSmiles(parent_smiles), Chem.MolFromSmiles(truth_smiles)
+    if parent is None or truth is None:
+        return "unparseable"
+    signs = {n > 0 for _, n in vec}
+    if signs == {True}:
+        sig = site_signature(parent, truth)
+        return f"+{sig}" if sig else "rearranged"
+    if signs == {False}:
+        sig = site_signature(truth, parent)
+        return f"-{sig}" if sig else "rearranged"
+    return "mixed"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--train", required=True)
@@ -122,6 +158,7 @@ def main() -> int:
     missing: Counter = Counter()
     examples: dict[str, list] = {}
     not_generated: Counter = Counter()
+    sites: Counter = Counter()
     for i, molecule in enumerate(molecules):
         if i and i % 50 == 0:
             print(f"  {i}/{len(molecules)}  {dict(categories)}", flush=True)
@@ -176,6 +213,11 @@ def main() -> int:
             not_generated[f"{label(vec)} via {info[2]}"] += 1
             examples.setdefault(f"{label(vec)} via {info[2]}", []).append(
                 dict(truth=truth_smiles, parent=info[0], similarity=round(info[1], 3)))
+            if cat == "reachable_1":
+                sig = edit_signature(info[0], truth_smiles, vec)
+                sites[sig] += 1
+                examples.setdefault(f"site {sig}", []).append(
+                    dict(truth=truth_smiles, parent=info[0], similarity=round(info[1], 3)))
 
     total = sum(categories.values())
     print(f"\n=== Channel 8 miss diagnosis on {total} class-3 molecules ===")
@@ -188,8 +230,11 @@ def main() -> int:
     print("\nReachable by formula but not generated (site/caps/steps):")
     for key, n in not_generated.most_common(15):
         print(f"{n:>4}  {key}")
+    print("\nOne-step misses by edit site (what a single-site SMARTS would have to do):")
+    for key, n in sites.most_common(30):
+        print(f"{n:>4}  {key}")
     json.dump({"categories": dict(categories), "missing": missing.most_common(),
-               "not_generated": not_generated.most_common(),
+               "not_generated": not_generated.most_common(), "sites": sites.most_common(),
                "examples": {k: v[:5] for k, v in examples.items()}},
               open(args.out, "w"), indent=2)
     return 0
