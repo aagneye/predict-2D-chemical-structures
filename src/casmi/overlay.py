@@ -1,8 +1,9 @@
 """Overlay: insert novel-structure candidates into a stronger base ranking.
 
-The public 0.46+ recipes retrieve from databases only, so a hidden-test class-3
-structure (in no database) can never appear in their lists. This module merges our
-derived candidates (Channel 8) into such a base list. The base is better than us on
+The public 0.46+ recipes find database structures well; their own analogue generator
+covers some structures that are in no database (hidden-test class 3). This module merges
+our derived candidates (Channel 8) into such a base list as a second opinion for those
+molecules. The base is better than us on
 classes 1 and 2 and its rank 1 carries most of the score, so by default nothing is
 inserted above rank 1 and insertion happens only when the base's own evidence is weak
 (no close library match), which is where class 3 hides.
