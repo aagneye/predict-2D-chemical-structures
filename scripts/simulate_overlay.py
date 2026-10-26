@@ -88,7 +88,7 @@ def main() -> int:
     thresholds = {"lib_max<0.8": 0.8, "lib_max<0.6": 0.6, "lib_max<0.4": 0.4}
     base_mrr = per_class([m["base"] for m in molecules])
     results = []
-    for gate_name, insert_at, k in product(gates, (1, 2, 5), (1, 3, 5)):
+    for gate_name, insert_at, k in product(gates, (0, 1, 2, 5), (1, 3, 5)):
         cfg = OverlayConfig(insert_at=insert_at, max_insert=k,
                             library_max_threshold=thresholds.get(gate_name, 0.6))
         lists, n_gated = [], 0
