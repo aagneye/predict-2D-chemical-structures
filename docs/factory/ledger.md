@@ -92,6 +92,13 @@ Channel 8 recall (12% @25 now) on top of this.
 
 ## Built, not yet measured
 
+- 2026-10-26 **Channel 8 site coverage**: 19 new edits (chain ±CH2, aliphatic / amide /
+  aniline / S methylation, S-demethylation, methyl esters, N-acetyl, aromatic C-hexose,
+  aliphatic sulfate, phosphate, aldehyde / imine reduction, epoxide, CH2 → C=O, Cl / Br),
+  mixed-sign deltas, and lazy scorer keys in `derive_candidates` (pool by SMILES, key
+  only the best-scoring products) so the caps can grow. Measuring: recall via
+  `diagnose_derivation.py` (`diag_v2`, and `diag_v2_s3` = 3 steps, 1,000 per path).
+
 - 2026-10-21 **Channel 8, analog derivation** (`src/casmi/channels/derivation.py`):
   applies the biosynthetic edit implied by each analog's mass shift (31 reaction
   SMARTS: hydroxyl, methyl, sugars, acyls, redox, (de)hydration, decarboxylation; up to
