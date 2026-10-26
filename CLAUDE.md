@@ -2,8 +2,10 @@
 
 ## The goal (the only success criterion)
 
-**Kaggle public leaderboard score > 0.46** on Enveda CASMI 2026
+**Top 10 on the Kaggle public leaderboard** of Enveda CASMI 2026
 (MRR@25, InChIKey14 after RDKit 2026.03.3 tautomer canonicalisation, stereo stripped).
+10th place was 0.484 on 2026-10-26 and rises ≈ 0.01/week; the earlier milestone
+> 0.46 ranked ≈ 780 that day, so it is a checkpoint, not the goal.
 Final deadline 2026-12-14 23:59 UTC; entry/merge deadline 2026-12-07.
 
 Score history lives in `docs/factory/ledger.md`. Read it first.
