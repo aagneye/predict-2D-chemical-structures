@@ -93,6 +93,9 @@ class MoleculeDiagnostics:
     n_pubchem_candidates: int = 0
     #: Number of analog-derived (Channel 8) candidates added for this molecule.
     n_derived_candidates: int = 0
+    #: Analog-derived (Channel 8) structures in final rank order, for overlays on a
+    #: stronger base ranking that has no channel for database-absent structures.
+    derived_smiles: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -664,6 +667,9 @@ def predict_molecule(
         n_denovo_candidates=len(denovo_candidates),
         n_pubchem_candidates=len(context["pubchem_candidates"]),
         n_derived_candidates=len(context["derived_candidates"]),
+        derived_smiles=[
+            c.smiles for c in ranked if c.smiles and c.features.get("derived", 0.0) > 0.5
+        ],
     )
     return [c.smiles for c in ranked if c.smiles], diagnostics
 

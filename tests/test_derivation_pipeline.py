@@ -77,6 +77,9 @@ class TestDerivationWiring:
         )
         assert inchikey14(ranked[0]) == inchikey14(TRUTH)
         assert diag.n_derived_candidates > 0
+        # the overlay reads derived structures in final rank order from the diagnostics
+        assert diag.derived_smiles and inchikey14(diag.derived_smiles[0]) == inchikey14(TRUTH)
+        assert all(s in ranked for s in diag.derived_smiles)
 
     def test_ranker_features_include_derivation_columns(self):
         for name in ("derived", "derivation_parent_sim", "derivation_steps", "derivation_support"):
