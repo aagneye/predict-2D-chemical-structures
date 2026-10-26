@@ -50,8 +50,9 @@ caps our stack near 0.42 — class 3 and the domain factor α have to move to pa
 
 ### Overlay simulation (2026-10-26, `scripts/simulate_overlay.py`, split v3 rows)
 
-Base = non-derived candidates ranked by the v8 ranker (no class-3 channel, like the
-public recipes): 0.933 / 0.611 / 0.002. Inserting Channel 8 structures with
+Base = non-derived candidates ranked by the v8 ranker (no class-3 channel): 0.933 /
+0.611 / 0.002. (Correction 2026-10-26: the public recipes *do* have an analogue generator,
+`EngineCfg(generate=True)` in engine 1, so this base is weaker on class 3 than theirs.) Inserting Channel 8 structures with
 `casmi.overlay.merge_overlay`:
 
 | Gate | Insert at | k | Gated | Class 1 | Class 2 | Class 3 | Δ public (fitted s3) | Δ (class 3 = ½) |
