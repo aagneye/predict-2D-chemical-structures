@@ -29,7 +29,23 @@ PROBES = [
     "CC(=O)CCC=CC",                                # ketone, C=C, CH2-CH2
     "OCCCC(O)CC",                                  # aliphatic alcohols
     "OC(=O)CCc1ccccc1",                            # carboxylic acid
+    "CSCCC(N)C(=O)O",                              # thioether, primary amine
+    "SCCO",                                        # thiol
+    "CC(=O)NCc1ccccc1N",                           # amide NH, aniline NH2
+    "O=CCc1ccccc1",                                # aldehyde
+    "CC=NCC",                                      # imine
 ]
+
+
+def test_formula_delta_counts_handles_mixed_signs():
+    from casmi.channels.derivation import formula_delta_counts
+
+    assert formula_delta_counts("+C6H10O5") == {"C": 6, "H": 10, "O": 5}
+    assert formula_delta_counts("-C1H2") == {"C": -1, "H": -2}
+    assert formula_delta_counts("+Cl1-H1") == {"Cl": 1, "H": -1}
+    assert formula_delta_mass("+O1-H2") == pytest.approx(15.9949146 - 2 * 1.00782503, abs=1e-5)
+    with pytest.raises(ValueError):
+        formula_delta_counts("C1H2")
 
 
 @pytest.fixture(scope="module")

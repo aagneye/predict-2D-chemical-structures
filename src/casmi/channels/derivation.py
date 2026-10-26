@@ -96,18 +96,51 @@ TRANSFORMS: tuple[tuple[str, str, str], ...] = (
     ("dehydration", "[C;!H0:1]-[C:2]-[O;H1]>>[C:1]=[C:2]", "-H2O1"),
     ("hydration", "[C:1]=[C:2]>>[C:1]-[C:2]O", "+H2O1"),
     ("decarboxylation", "[#6:1]-C(=O)-[O;H1]>>[#6:1]", "-C1O2"),
+    # Added 2026-10-26 from the class-3 miss diagnosis (docs/factory/ledger.md): the
+    # formula deltas were reachable but the edits above never touch these sites.
+    ("chain_homologation", "[CH3;X4:1]-[C;X4:2]>>[C:2]-[C:1]-C", "+C1H2"),
+    ("chain_shortening", "[CH3:1]-[CH2:2]-[C;X4:3]>>[CH3:1]-[C:3]", "-C1H2"),
+    ("C_methylation_aliphatic", "[C;X4;H2,H3:1]>>[C:1]C", "+C1H2"),
+    ("O_methylation_acid", "[C:1](=[O:2])-[O;H1:3]>>[C:1](=[O:2])-[O:3]C", "+C1H2"),
+    ("N_methylation_amide_aniline", "[N;H1,H2;$(NC=O),$(N-a):1]>>[N:1]C", "+C1H2"),
+    ("S_methylation", "[S;H1;X2:1]-[#6:2]>>[#6:2]-[S:1]C", "+C1H2"),
+    ("S_demethylation", "[#6:2]-[S;X2:1]-[CH3]>>[#6:2]-[S:1]", "-C1H2"),
+    ("N_acetylation", "[N;H1,H2;!$(NC=O):1]>>[N:1]C(C)=O", "+C2H2O1"),
+    ("C_hexose_aromatic", "[c;H1:1]>>[c:1]C1OC(CO)C(O)C(O)C1O", "+C6H10O5"),
+    ("O_sulfation_aliphatic", "[O;H1;!$(OC=O);!$(Oc):1]-[C:2]>>[C:2]-[O:1]S(=O)(=O)O",
+     "+O3S1"),
+    ("O_phosphorylation", "[O;H1;!$(OC=O):1]-[#6:2]>>[#6:2]-[O:1]P(=O)(O)O", "+H1O3P1"),
+    ("aldehyde_reduction", "[C;H1:1](=[O:2])-[#6:3]>>[#6:3]-[C:1]-[O:2]", "+H2"),
+    ("imine_reduction", "[C:1]=[N;X2:2]>>[C:1]-[N:2]", "+H2"),
+    ("epoxidation", "[C:1]=[C:2]>>[C:1]1[C:2]O1", "+O"),
+    ("methylene_oxidation", "[C;X4;H2:1]>>[C:1]=O", "+O1-H2"),
+    ("aromatic_chlorination", "[c;H1:1]>>[c:1]Cl", "+Cl1-H1"),
+    ("aromatic_bromination", "[c;H1:1]>>[c:1]Br", "+Br1-H1"),
 )
 
 _ELEMENT = re.compile(r"([A-Z][a-z]?)(\d*)")
 
 
+_SIGNED_GROUP = re.compile(r"([+-])([A-Za-z0-9]+)")
+
+
+def formula_delta_counts(delta: str) -> dict[str, int]:
+    """Element counts of a signed formula delta: ``+C6H10O5``, ``-C1H2``, ``+Cl1-H1``."""
+    counts: dict[str, int] = {}
+    groups = _SIGNED_GROUP.findall(delta)
+    if "".join(s + body for s, body in groups) != delta:
+        raise ValueError(f"malformed formula delta {delta!r}")
+    for sign, body in groups:
+        for element, count in _ELEMENT.findall(body):
+            counts[element] = counts.get(element, 0) + (
+                (int(count) if count else 1) * (-1 if sign == "-" else 1)
+            )
+    return {e: n for e, n in counts.items() if n}
+
+
 def formula_delta_mass(delta: str) -> float:
-    """Monoisotopic mass of a signed formula delta like ``+C6H10O5`` or ``-C1H2``."""
-    sign = -1.0 if delta.startswith("-") else 1.0
-    mass = 0.0
-    for element, count in _ELEMENT.findall(delta.lstrip("+-")):
-        mass += ATOMIC_MASS[element] * (int(count) if count else 1)
-    return sign * mass
+    """Monoisotopic mass of a signed formula delta like ``+C6H10O5`` or ``+Cl1-H1``."""
+    return sum(ATOMIC_MASS[e] * n for e, n in formula_delta_counts(delta).items())
 
 
 @dataclass(frozen=True)
