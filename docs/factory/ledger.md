@@ -6,7 +6,10 @@ Newest first. Every entry: what changed, offline emulator number, Kaggle public 
 
 | Version | Date | Public | What changed |
 |---|---|---|---|
-| v8 | 2026-10-20 | **0.252** | evidence-based pruning, PubChem 106M tier channel, CV reranker (29 feat, OOF 0.66), popularity v2 |
+| base-0467 | 2026-10-26 | **0.467** | unchanged copy of alexchilton/casmi26-lb-0-467-one-knob (public lineage: corrected PubChem + neural 0.25, RRF offset 1); reproduces exactly; rank ≈ 66 |
+| fork-0462 | 2026-10-26 | 0.462 | flexonafft v49 cells 0–6 (the 0.462 challenger recipe), unchanged; reproduces exactly |
+| v9 | 2026-10-26 | 0.255 | v8 + Channel 8 analog derivation + 33-feature CV reranker. Emulator said 0.287: class 3 transferred ≈ +0.003 (recall 12%, wrong sites), class-2 "gain" was an apples-to-oranges split comparison |
+| v8 | 2026-10-20 | 0.252 | evidence-based pruning, PubChem 106M tier channel, CV reranker (29 feat, OOF 0.66), popularity v2 |
 | v7 | 2026-10-12 | 0.186 | pool = train ∪ COCONUT ∪ PubChemLite (1.07M), popularity prior, FPNet v2, parsimony fragmentation, weighted fusion |
 | v4 | 2026-09-20 | 0.148 | train-only pool, FPNet, fragmentation, in-sample 22-feat reranker |
 | v2 | 2026-09-18 | 0.152 | library + analog only |
@@ -59,6 +62,29 @@ public recipes): 0.933 / 0.611 / 0.002. Inserting Channel 8 structures with
 | lib_max < 0.8 | below rank 1 | 3 | 68% | 0.931 | 0.610 | 0.055 | +0.004 | +0.013 |
 
 Replacing the base's rank 1 (insert at 0) never makes the top 15 under either weighting.
+
+### Channel 8 miss diagnosis (2026-10-26, `scripts/diagnose_derivation.py`, 400 class-3 molecules)
+
+| Category | Share | Meaning |
+|---|---|---|
+| generated | 11.8% | truth produced (= recall) |
+| reachable_1 | 28.2% | truth formula = parent + one transform delta, but not produced |
+| reachable_2 | 18.5% | two deltas away, not produced |
+| reachable_3 | 11.8% | three deltas away (we allow 2) |
+| zero_delta | 4.2% | truth is an isomer of a parent |
+| no_parent | 25.5% | no spectral analog ≥ 0.3 similarity |
+| unreachable | 0% | — |
+
+The transform *vocabulary* covers every class-3 formula within 3 steps; the misses are
+site chemistry (methyl on aliphatic chains / S instead of aromatic C; thioether
+demethylation), rearranged analogs (same delta, different arrangement), caps and depth,
+and 25% with no parent at all. Example pairs are in `/mnt/casmi/runs/diag_derivation.json`.
+
+### Kaggle GPU quota
+
+2026-10-26 03:1x UTC: `Kernel push error: Maximum weekly GPU quota of 30.00 hours reached`
+— the overlay kernel (needs the GPU base) cannot run until the weekly reset (weekend,
+00:00 UTC; check kaggle.com/settings). Use the week for Channel 8 recall on the VM.
 Reading: one structure directly below rank 1 is nearly free for classes 1–2 (−0.001 to
 −0.004) and lifts class 3 to 0.05–0.06 (vs 0.10 when the v9 ranker may put it first).
 On a 0.467 base that is ≈ +0.005…+0.015 → 0.47–0.48; the top 10 (0.484) needs better
@@ -92,18 +118,22 @@ The COCONUT/PubChemLite metadata elsewhere ships only as pickles: never unpickle
 2026-10-26: kernel v9 pushed 3 s after `kaggle datasets status` said "ready" ran against
 the *previous* dataset version (`No module named casmi.channels.derivation`). Wait a few
 minutes after a dataset version before `kaggle kernels push`, or pin the version.
+Same day, overlay kernel v1: `No module named casmi.overlay` — the dataset is a snapshot
+of `src/casmi`; any new module needs a dataset version *before* the kernel push.
 
 ## Open bets toward > 0.46 (ordered by expected gain per hour)
 
-1. **Fork of the 0.462 public recipe** — pushed 2026-10-26 as
-   `aagneye/casmi26-e006-challenger-fork` v1 (user-approved); submitted automatically when
-   the kernel completes. Expected ≈ 0.46 (rank ≈ 780); it is the base for bet 3.
-2. **Submit v9** (emulator 0.287, +0.035 over v8): confirms that Channel 8 transfers to
-   the hidden test and pins the emulator's class-3 share.
-3. **Channel 8 overlay on the fork**: the public recipes have no class-3 channel, so their
-   class-3 MRR is ≈ 0; our derived candidates (0.10 offline) inserted for molecules whose
-   engine evidence is weak is the one addition nobody else has. Needs the fork's
-   per-molecule evidence exported (engine scores / entropy similarity) — see docs/12.
+1. ~~Fork the public recipes~~ done 2026-10-26: 0.467 and 0.462 reproduced under our account.
+2. ~~Submit v9~~ done: 0.255. Channel 8 must find far more before it moves the board.
+3. **Channel 8 recall 12% → 40%+** (the diagnosis shows the headroom): add the missing
+   site chemistry (aliphatic C-methylation / chain homologation ±CH2, S-(de)methylation,
+   methyl esters, amide N-methylation, C=N/aromatic reductions), raise the per-path caps,
+   allow 3 steps when the mass demands it, lower the parent floor / take parents from the
+   base's own lists for the 25% without a parent. Measure with `diagnose_derivation.py`
+   (generated share) then `run_baseline.py` on `split_emu` → emulator.
+4. **Overlay kernel** (`aagneye/casmi26-lb0467-class3-overlay`, built and tested; v1
+   failed only because the dataset predated `casmi.overlay`; dataset fixed) — push when
+   the GPU quota resets, with the improved Channel 8. Offline: +0.005…+0.014 on 0.467.
    Prize-eligibility risk: some lineage weights lack public training code.
    Public notebook scores checked 2026-10-22 (public LB, ±0.01 noise):
    flexonafft/casmi26-closing-the-evidence-gap **0.462 best (V47)**, 0.457 latest (V49,
