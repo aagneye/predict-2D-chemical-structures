@@ -80,6 +80,32 @@ site chemistry (methyl on aliphatic chains / S instead of aromatic C; thioether
 demethylation), rearranged analogs (same delta, different arrangement), caps and depth,
 and 25% with no parent at all. Example pairs are in `/mnt/casmi/runs/diag_derivation.json`.
 
+Recall after the 19 site-level edits (same 400 molecules; "generated" = truth among the
+products, before ranking):
+
+| Setting | Generated | No parent |
+|---|---|---|
+| old edits (31), 2 steps, floor 0.3 | 11.8% | 25.5% |
+| + 19 edits, 2 steps, floor 0.3 | 21.8% | 24.5% |
+| + 3 steps, 1,000 products/path | 25.0% | 24.5% |
+| + parent floor 0.15, 30 parents (2 steps) | 25.5% | 15.2% |
+| natural-product-flagged class 3 only (198 mol, 2 steps) | 18.7% | 21.7% |
+
+Of the 113 one-step misses with the old edits, 77 were "rearranged" (the parent is not a
+substructure of the truth): no single-site edit can reach them — the ceiling of the
+edit-a-known-analog idea is roughly 50–60% of class 3.
+
+### LB emulator, round 2 (2026-10-26) — class 3 does not transfer
+
+v9's own code on `split_emu`: 0.910 / 0.494 / **0.078** → Kaggle 0.255 (v8: 0.904 / 0.493 /
+0.000 → 0.252). Refit on four points: shares 0.27 / 0.72 / **0.01**, α = 0.425, RMSE 0.0034.
+Fixed alternatives fit worse (0.30/0.50/0.20: RMSE 0.009; 0.16/0.45/0.39: 0.010;
+0.28/0.20/0.52: 0.021). Reading: a class-3 MRR of 0.08 on our train-derived proxy bought
+≈ +0.000–0.003 on the board. Either class 3 is a small part of the public test, or (more
+likely, and what the forum reports) our class-3 proxy is easier than the hidden novel
+natural products. Consequence: the overlay's expected gain is 0 … +0.005, not a route to
+the top 10 by itself; class-2 discrimination on the strong base is.
+
 ### Kaggle GPU quota
 
 2026-10-26 03:1x UTC: `Kernel push error: Maximum weekly GPU quota of 30.00 hours reached`
@@ -132,7 +158,14 @@ of `src/casmi`; any new module needs a dataset version *before* the kernel push.
 
 1. ~~Fork the public recipes~~ done 2026-10-26: 0.467 and 0.462 reproduced under our account.
 2. ~~Submit v9~~ done: 0.255. Channel 8 must find far more before it moves the board.
-3. **Channel 8 recall 12% → 40%+** (the diagnosis shows the headroom): add the missing
+0. **Testing centre for the 0.467 base (next)**: run the public base on the VM against
+   identity-disjoint labelled molecules (dmitriigluzdov's validation folds / NP panel
+   datasets exist for this) so changes *on the base* are measured offline. Then the
+   forum's levers on that base: forward-model (ICEBERG/GLACIER) coverage for molecules
+   lacking scores (+0.008 per step historically) and retraining engine 1's ranker with
+   source flags (10–40 CPU h per setting — fits the 64-vCPU VM). Needs the user's OK to
+   run third-party code on the shared VM.
+3. **Channel 8 recall 12% → 40%+** (deprioritised by emulator round 2; recall now 25%): add the missing
    site chemistry (aliphatic C-methylation / chain homologation ±CH2, S-(de)methylation,
    methyl esters, amide N-methylation, C=N/aromatic reductions), raise the per-path caps,
    allow 3 steps when the mass demands it, lower the parent floor / take parents from the
