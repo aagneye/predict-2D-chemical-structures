@@ -11,7 +11,9 @@
 #             (default /mnt/casmi/data/raw = the visible competition files). Point it at a
 #             folder with a held-out test.parquet to score the notebook offline.
 # Env: GPU=<index> (default: the GPU with the most free memory);
-#      FORCE_FULL=1 skips the visible-test fast path of notebooks that have one.
+#      FORCE_FULL=1 skips the visible-test fast path of notebooks that have one;
+#      RERUN=1 sets KAGGLE_IS_COMPETITION_RERUN, so the notebook processes every molecule
+#      as in Kaggle's scoring rerun (use it for full-scale timing and coverage).
 set -euo pipefail
 
 NB=$(readlink -f "$1")
@@ -39,7 +41,8 @@ echo "run $RUN | notebook $NB | comp $COMP | GPU $GPU | ${#DATASETS[@]} datasets
 unshare -rmn --propagation private env \
     TREE="$TREE" COMP="$COMP" ROOT="$ROOT" OUT="$OUT" VENV="$VENV" COMP_SLUG="$COMP_SLUG" \
     DATASETS="${DATASETS[*]}" REAL_HOME="$HOME" CUDA_VISIBLE_DEVICES="$GPU" \
-    CASMI_FORCE_FULL="${FORCE_FULL:-}" PYTHONHASHSEED=0 bash -c '
+    CASMI_FORCE_FULL="${FORCE_FULL:-}" KAGGLE_IS_COMPETITION_RERUN="${RERUN:-}" \
+    PYTHONHASHSEED=0 bash -c '
   set -euo pipefail
   ip link set lo up
   mount --bind "$TREE" /kaggle
