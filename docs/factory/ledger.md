@@ -107,6 +107,21 @@ likely, and what the forum reports) our class-3 proxy is easier than the hidden 
 natural products. Consequence: the overlay's expected gain is 0 … +0.005, not a route to
 the top 10 by itself; class-2 discrimination on the strong base is.
 
+### Testing centre for the public base (2026-10-27)
+
+`scripts/run_public_base.sh` runs a public notebook on the VM in a no-network sandbox
+(`unshare -rmn`, Kaggle-shaped `/kaggle` bind-mounted, `~/.kaggle` hidden) with a
+Python 3.12 env matching Kaggle (numpy 2.0.2, pandas 2.3.3, pyarrow 24, sklearn 1.6.1,
+torch 2.10 cu128) and all 7 inputs of the 0.467 notebook (39 GB in
+`/mnt/casmi/base0467/input`). Smoke run (12 visible molecules): **RUN_OK**, 3,014 s, of
+which ≈ 2,800 s is setup (library, pools, engines) and ≈ 90 s the simulators. ICEBERG
+scored 11/12 molecules (47 pred/s on a T4), GLACIER 11/11 (62 pred/s, [M+H]+ only), N1
+proxies 0 (no non-[M+H]+ molecules in the sample). The "CLAW STAGE HEALTH | ICE NOT RUN"
+line is a stale label; "STAGE SCORED ice=11 gl=11" is the real count. Rerun budgets:
+ICE 5,400 s, GL 4,000 s, N1 1,200 s. Full 400-molecule rerun-mode run started for
+stage timings and per-molecule simulator coverage (accuracy on the visible test is
+meaningless — it is a sample of train).
+
 ### Kaggle GPU quota
 
 2026-10-26 03:1x UTC: `Kernel push error: Maximum weekly GPU quota of 30.00 hours reached`
