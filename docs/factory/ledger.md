@@ -122,6 +122,19 @@ ICE 5,400 s, GL 4,000 s, N1 1,200 s. Full 400-molecule rerun-mode run started fo
 stage timings and per-molecule simulator coverage (accuracy on the visible test is
 meaningless — it is a sample of train).
 
+Full rerun-mode run, 400 visible molecules (1,213 spectra, all timsTOF): **RUN_OK in
+5,153 s (86 min) of the 9 h limit** — ≈ 7 h of headroom. ≈ 69 candidates per molecule go
+to the simulators (27,594). ICEBERG 1,226 s, 371/400 molecules; GLACIER [M+H]+ only,
+366/400; N1 proxies (NH4p/WLp) 2 molecules. **34 molecules (8.5%) have no [M+H]+
+spectrum: 25 negative-only [M-H]-, 5 [M+Na]+, 2 [M+NH4]+, 2 formate** — 32 of them get no
+GLACIER score and ≈ 29 no ICEBERG score. 124/400 molecules have negative-mode spectra.
+Leads for the next base experiments (each verified to run in the sandbox first):
+(E1) the Channel 8 overlay, ready; (E2) an [M-H]- proxy arm for the N1 stage — the
+forum's repeatable +0.008 steps were exactly this kind of simulator coverage for
+non-[M+H]+ molecules; (E3) spend the 7 h headroom on more candidates per molecule in the
+simulator window. Offline accuracy stays unmeasurable on the base (its models saw the
+train molecules), so these are confirmed on the LB after the GPU quota resets.
+
 ### Kaggle GPU quota
 
 2026-10-26 03:1x UTC: `Kernel push error: Maximum weekly GPU quota of 30.00 hours reached`
