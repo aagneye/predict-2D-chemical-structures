@@ -10,7 +10,8 @@
 #   comp-dir: folder with train.parquet, test.parquet, sample_submission.csv
 #             (default /mnt/casmi/data/raw = the visible competition files). Point it at a
 #             folder with a held-out test.parquet to score the notebook offline.
-# Env: GPU=<index> (default: the GPU with the most free memory);
+# Env: GPU=<index> (default: the GPU with the most free memory), GPU=none for CPU only;
+#      CPUS=<list> pins the run to these cores (taskset), e.g. CPUS=0-3 = a Kaggle CPU box;
 #      FORCE_FULL=1 skips the visible-test fast path of notebooks that have one;
 #      RERUN=1 sets KAGGLE_IS_COMPETITION_RERUN, so the notebook processes every molecule
 #      as in Kaggle's scoring rerun (use it for full-scale timing and coverage).
@@ -26,6 +27,9 @@ TREE="$OUT/kaggle"
 COMP_SLUG=enveda-CASMI26-molecule-id-mass-spectra
 GPU=${GPU:-$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits \
              | sort -t, -k2 -nr | head -1 | cut -d, -f1)}
+[ "$GPU" = none ] && GPU=""
+PIN=()
+[ -n "${CPUS:-}" ] && PIN=(taskset -c "$CPUS")
 
 mkdir -p "$TREE/input/competitions/$COMP_SLUG" "$TREE/working" "$OUT/empty_home"
 DATASETS=()
@@ -35,10 +39,11 @@ for dir in "$ROOT"/input/datasets/*/*; do
   DATASETS+=("$rel")
 done
 cp "$NB" "$OUT/input.ipynb"
-echo "run $RUN | notebook $NB | comp $COMP | GPU $GPU | ${#DATASETS[@]} datasets"
+echo "run $RUN | notebook $NB | comp $COMP | GPU ${GPU:-none} | CPUS ${CPUS:-all}" \
+     "| ${#DATASETS[@]} datasets"
 
 # Everything below runs without network; loopback is needed for the Jupyter kernel.
-unshare -rmn --propagation private env \
+"${PIN[@]}" unshare -rmn --propagation private env \
     TREE="$TREE" COMP="$COMP" ROOT="$ROOT" OUT="$OUT" VENV="$VENV" COMP_SLUG="$COMP_SLUG" \
     DATASETS="${DATASETS[*]}" REAL_HOME="$HOME" CUDA_VISIBLE_DEVICES="$GPU" \
     CASMI_FORCE_FULL="${FORCE_FULL:-}" KAGGLE_IS_COMPETITION_RERUN="${RERUN:-}" \
