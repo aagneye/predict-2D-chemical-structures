@@ -14,6 +14,16 @@ Newest first. Every entry: what changed, offline emulator number, Kaggle public 
 | v4 | 2026-09-20 | 0.148 | train-only pool, FPNet, fragmentation, in-sample 22-feat reranker |
 | v2 | 2026-09-18 | 0.152 | library + analog only |
 
+Leaderboard reference (2026-10-29, ≈ 4,300 teams): 1st 0.517, 2nd 0.513, 10th 0.484,
+gold line ≈ rank 18 at 0.481; **231 teams sit at exactly 0.477** — the new best public
+notebook (busyaprime "LB 0.477 · Two 0.472 Fixes, Merged the Right Way", submission
+57722897): the same 0.465 pipeline + neural weight 0.75 on ranks 2–25 + Roman Tamrazov's
+fragment check moving rank 1 (taken from the 0.50 order). Its own ablations, all on the
+hidden test: long-trained neural model −0.019, NX isomer reranker −0.058, provenance
+reranker ±0, three leader-rule thresholds ±0, vote step .025 → .015 −0.004. Fork
+`aagneye/casmi26-lb-0-477-base-unchanged-public-copy` built (unchanged notebook, same 7
+datasets, image `9a6bcfda…`); `scripts/push_when_quota.sh` pushes and submits it as soon
+as the GPU quota resets.
 Leaderboard reference (2026-10-26, 4,059 teams): 1st 0.504, 10th 0.484, 66th 0.467,
 778th 0.460; we are 2,886th (0.252). Best public notebook 0.462 (flexonafft V47).
 (2026-10-19: 1st 0.495, 10th ≈ 0.464 — the top is rising ≈ 0.01/week.)
@@ -134,6 +144,35 @@ forum's repeatable +0.008 steps were exactly this kind of simulator coverage for
 non-[M+H]+ molecules; (E3) spend the 7 h headroom on more candidates per molecule in the
 simulator window. Offline accuracy stays unmeasurable on the base (its models saw the
 train molecules), so these are confirmed on the LB after the GPU quota resets.
+
+CPU-only run (2026-10-29, `GPU=none CPUS=0-3 RERUN=1`, a Kaggle CPU notebook's 4 cores):
+**RUN_FAILED — the 0.467 base cannot be submitted as a CPU notebook.** ICEBERG falls back
+to CPU by itself but scores 2.6 predictions/s (≈ 1 candidate/s; a T4 does ≈ 20): its
+5,400 s budget covered 86 of 371 molecules, and the final pass asserts
+`ice status == 'ok'`. GLACIER on CPU is fine (16 pred/s, 366/366 in 3,235 s); the rest
+of the pipeline takes ≈ 4,100 s on 4 cores. A full CPU ICEBERG would need ≈ 6.7 h on its
+own, so CPU only works with fewer ICEBERG candidates — a different recipe, which would
+confound every A/B against the GPU base. Where ICEBERG enters: cell 41 (z(score) +
+z(ice) + z(gl) for engine and PubChem lists), cell 45 (`CELL19_ICE`), and cell 52 (ICE
+only where a molecule has no GLACIER score); cell 49 passes `{}` for ICE.
+
+### E2 probe: can [M-H]- spectra stand in for [M+H]+? (2026-10-29, `scripts/probe_negative_proxy.py`)
+
+Measured spectra only, no model: 3,000 train molecules with both [M+H]+ and [M-H]-, each
+ranked among its same-formula molecules (mean 25.7 candidates) by entropy similarity to
+their measured [M+H]+ spectra.
+
+| Query | MRR | Top-1 | Top-5 |
+|---|---:|---:|---:|
+| chance | 0.261 | | |
+| [M-H]- unshifted (control) | 0.463 | 30% | 66% |
+| **[M-H]- shifted +2 protons (E2 proxy)** | **0.522** | 37% | 70% |
+| a second [M+H]+ spectrum (ceiling) | 0.885 | 82% | 96% |
+
+The proxy adds +0.06 over the unshifted control even against *measured* [M+H]+ spectra;
+GLACIER predictions are weaker than measurements, so the usable signal for the ≈ 7%
+negative-only molecules is small and a z-score fusion at weight 1 could hurt.
+**E2 deprioritised.**
 
 ### Kaggle GPU quota
 
