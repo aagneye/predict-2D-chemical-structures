@@ -238,6 +238,21 @@ B. **Neural seed ensemble (next).** Every public step 0.465 → 0.477 came from 
    `aagneye/casmi26-neural-seeds` (`seed*/final_model_seed*.pt`). Offline check:
    `scripts/neural_seed_ensemble.py eval` (same held-out molecules and candidates for each
    seed and their average; relative only).
+   **Measured 2026-10-29** (`scripts/run_neural_seeds.sh 101 202 303 404`, sandbox, GPU 1,
+   ≈ 30 min incl. eval after a 95-min single-core cache build): our cache reproduces v1's
+   holdout split exactly (v1's best_validation_model scores 0.48440741 here, its own
+   reported number), 1,000 held-out molecules × 256 candidates:
+
+   | Model | diagnostic MRR@25 | top-1 |
+   |---|---:|---:|
+   | v1 (public) | 0.484 | 34.4% |
+   | seeds 101 / 202 / 303 / 404 | 0.472 / 0.484 / 0.487 / 0.482 | 33.7–34.6% |
+   | **average of the 5** | **0.541** | **40.3%** |
+
+   +0.056 from averaging alone, at v1's training length. Random molecular holdout, so this
+   says "better ranker", not a leaderboard number. Seeds uploaded as the private dataset
+   `aagneye/casmi26-neural-seeds` (sha256 f5cf6344…, 02a103bb…, 5af9cf93…, 4964c82d…;
+   also in `~/casmi_checkpoints/neural_seeds`). Sandbox smoke run of the kernel started.
 C. ~~E3 wider simulator window~~: no effect by construction — simulator scores only act
    inside the final 40-candidate fusion shortlist (base top 60 + engine-2 top 40 are
    already in the ICE input). ~~E2~~: see the probe above. E1 (class-3 overlay): one
