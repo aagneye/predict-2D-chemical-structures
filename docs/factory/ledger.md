@@ -222,7 +222,29 @@ minutes after a dataset version before `kaggle kernels push`, or pin the version
 Same day, overlay kernel v1: `No module named casmi.overlay` — the dataset is a snapshot
 of `src/casmi`; any new module needs a dataset version *before* the kernel push.
 
-## Open bets toward > 0.46 (ordered by expected gain per hour)
+## Open bets toward the top 10 (2026-10-29, on the 0.477 base)
+
+A. **Submit the 0.477 fork** (queued: `push_when_quota.sh` on the VM, log
+   `~/casmi_checkpoints/logs/push_0477.log`). Expected 0.477.
+B. **Neural seed ensemble (next).** Every public step 0.465 → 0.477 came from re-ranking
+   the final 25 with sanpier's spectrum-candidate scorer (weight 0.25 → 0.50 → 0.75) plus
+   Tamrazov's fragment check. The scorer is tiny (3-layer transformer, 16 epochs × 500
+   steps = **≈ 5 GPU-minutes**, 17 s/epoch) and has public training code; a longer-trained
+   copy lost 0.019 on the board (its random-holdout gain was memorisation). So: keep the
+   exact recipe and length, train 4 more seeds on the VM, average scores
+   (`kaggle/neural_ensemble/neural_scores.py`, a one-module patch with the notebook's own
+   SHA-256 pin updated by `scripts/build_module_patch_kernel.py`; with no seed files it
+   equals v1). Kernel `aagneye/casmi26-lb-0-477-neural-seed-ensemble` built; needs dataset
+   `aagneye/casmi26-neural-seeds` (`seed*/final_model_seed*.pt`). Offline check:
+   `scripts/neural_seed_ensemble.py eval` (same held-out molecules and candidates for each
+   seed and their average; relative only).
+C. ~~E3 wider simulator window~~: no effect by construction — simulator scores only act
+   inside the final 40-candidate fusion shortlist (base top 60 + engine-2 top 40 are
+   already in the ICE input). ~~E2~~: see the probe above. E1 (class-3 overlay): one
+   submission at most; the forum reports the same negative result for rule-based
+   biotransformation.
+
+## Open bets toward > 0.46 (2026-10-26, kept for history)
 
 1. ~~Fork the public recipes~~ done 2026-10-26: 0.467 and 0.462 reproduced under our account.
 2. ~~Submit v9~~ done: 0.255. Channel 8 must find far more before it moves the board.
