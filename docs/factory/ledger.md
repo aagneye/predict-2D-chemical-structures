@@ -252,7 +252,20 @@ B. **Neural seed ensemble (next).** Every public step 0.465 → 0.477 came from 
    +0.056 from averaging alone, at v1's training length. Random molecular holdout, so this
    says "better ranker", not a leaderboard number. Seeds uploaded as the private dataset
    `aagneye/casmi26-neural-seeds` (sha256 f5cf6344…, 02a103bb…, 5af9cf93…, 4964c82d…;
-   also in `~/casmi_checkpoints/neural_seeds`). Sandbox smoke run of the kernel started.
+   also in `~/casmi_checkpoints/neural_seeds`).
+   Seeds 505/606/707/808: 0.489 / 0.482 / 0.500 / 0.473; v1 + these four = 0.536 (repeats
+   the first five's 0.541); **all 9 = 0.544, top-1 40.7%** — diminishing but positive, and
+   scoring costs seconds, so the kernel uses 9 (dataset version 2 holds 8 seed files).
+   Sandbox smoke run of the kernel (2026-10-29): **RUN_OK**, the notebook's own SHA-256
+   check accepts the patched module, `NEURAL ENSEMBLE size 5` on both the final lists and
+   the outside candidates, 0 molecules falling back; neural scoring of 12 molecules ≈ 10 s
+   with 5 models (≈ minutes for the hidden ≈ 420), so the fragment check's 8.55 h
+   runtime guard is not at risk. Queued on the VM behind the 0.477 fork
+   (`~/casmi_checkpoints/logs/push_ensemble.log`).
+   Testing-centre note: the 400-molecule rerun-mode run of the 0.477 failed on the VM
+   because I ran it alongside the smoke run, the cache build and 4 trainings (load 78 on
+   64 cores; Engine 2 took 4 h and tripped its "covered all molecules" assert, GLACIER
+   lost its GPU). Run full-scale timings alone on the VM.
 C. ~~E3 wider simulator window~~: no effect by construction — simulator scores only act
    inside the final 40-candidate fusion shortlist (base top 60 + engine-2 top 40 are
    already in the ICE input). ~~E2~~: see the probe above. E1 (class-3 overlay): one
